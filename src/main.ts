@@ -1,14 +1,25 @@
 import './style.css';
-import { levelAt, reachDistance, sourceLevel } from './acoustics';
+import { levelAt, sourceLevel, type Levels } from './acoustics';
+import { elevationService } from './elevation';
 import { compass, distanceBearing, formatDistance, formatLatLon, parseLatLon, type LatLon } from './geo';
-import { SoundMap, escapeHtml } from './map';
+import { SoundMap, escapeHtml, type TerrainOverlay } from './map';
 import { LIMITS, loadCurrent, loadLibrary, newScenario, sanitize, saveCurrent, saveLibrary, uid, type Scenario } from './state';
-import { AUDIBILITY_BANDS, RING_LEVELS, legalBands } from './zones';
+import type { ProfilePoint, ShieldingAnalysis } from './terrain';
+import { ZONE_RANGE_M, TerrainService, type ReceptorTerrain } from './terrainService';
+import { AUDIBILITY_BANDS, RING_LEVELS, flatGround, legalBands, shieldedReach } from './zones';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
 let scenario: Scenario = loadCurrent() ?? newScenario();
 let fitPending = true;
+/** Receptor whose elevation profile is drawn under the table. */
+let selectedReceptor: string | null = null;
+/** The zone grid is fetched on request; these track that one job. */
+let zoneBusy = false;
+let zoneProgress = '';
+let zoneError = '';
+
+const terrainService = new TerrainService(elevationService, () => render());
 
 const soundMap = new SoundMap($('map'), {
   onStageMoved(p) {
@@ -127,6 +138,45 @@ $<HTMLInputElement>('soft').addEventListener('change', (e) => {
   scenario.rig.softGround = (e.target as HTMLInputElement).checked;
   render();
 });
+$<HTMLInputElement>('terrain').addEventListener('change', (e) => {
+  scenario.terrain.enabled = (e.target as HTMLInputElement).checked;
+  zoneError = '';
+  render();
+});
+for (const [id, field] of [
+  ['src-h', 'sourceHeightM'],
+  ['rcv-h', 'receiverHeightM'],
+] as const) {
+  $<HTMLInputElement>(id).addEventListener('change', (e) => {
+    const v = Number((e.target as HTMLInputElement).value);
+    // Changing a height invalidates the zone grid: it is keyed by the heights too.
+    if (Number.isFinite(v) && v >= 0 && v <= 200) scenario.terrain[field] = v;
+    render();
+  });
+}
+$('terrain-zones').addEventListener('click', () => void applyTerrainToZones());
+
+async function applyTerrainToZones() {
+  const s = scenario;
+  if (!s.stage || zoneBusy || !s.terrain.enabled) return;
+  zoneBusy = true;
+  zoneError = '';
+  zoneProgress = 'sampling the terrain…';
+  render();
+  try {
+    await terrainService.buildZoneShielding(s.stage, s.terrain.sourceHeightM, s.terrain.receiverHeightM, (done, total) => {
+      zoneProgress = total ? `sampling the terrain… ${Math.round((done / total) * 100)}%` : 'sampling the terrain…';
+      $('terrain-zones-state').textContent = zoneProgress;
+    });
+  } catch {
+    zoneError = 'could not reach the elevation service';
+  } finally {
+    zoneBusy = false;
+    zoneProgress = '';
+    render();
+  }
+}
+
 $<HTMLInputElement>('max').addEventListener('change', (e) => {
   const v = Number((e.target as HTMLInputElement).value);
   if (Number.isFinite(v) && v > 60 && v < 150) scenario.rig.maxLevelAt10m = v;
@@ -167,7 +217,12 @@ $('rec-table').addEventListener('click', (e) => {
     return;
   }
   const focus = t.closest<HTMLElement>('[data-focus]');
-  if (focus) soundMap.focusReceptor(focus.dataset.focus!);
+  if (focus) {
+    const id = focus.dataset.focus!;
+    selectedReceptor = selectedReceptor === id ? null : id;
+    soundMap.focusReceptor(id);
+    render();
+  }
 });
 
 // Scenarios
@@ -257,6 +312,108 @@ function persist() {
   saveCurrent(scenario);
 }
 
+/** Per-receptor terrain for the current render, so the table, the profile and the map agree. */
+const receptorTerrain = new Map<string, ReceptorTerrain>();
+
+const NO_DATA_TIP =
+  'The elevation service could not be reached, so this level assumes flat ground. Check the connection, then nudge the house on the map to try again.';
+
+/**
+ * Ask the terrain service for everything this render needs. Misses come back pending and
+ * trigger a re-render when they land, so this stays synchronous.
+ */
+function buildOverlay(s: Scenario): TerrainOverlay {
+  receptorTerrain.clear();
+  const receptors = new Map<string, Levels>();
+  if (!s.stage || !s.terrain.enabled) return { shieldingAt: flatGround, receptors };
+  for (const r of s.receptors) {
+    const t = terrainService.receptorTerrain(s.stage, r, s.terrain.sourceHeightM, s.terrain.receiverHeightM);
+    receptorTerrain.set(r.id, t);
+    if (t.status === 'ready') receptors.set(r.id, t.shielding);
+  }
+  const zones = terrainService.zoneShielding(s.stage, s.terrain.sourceHeightM, s.terrain.receiverHeightM);
+  return { shieldingAt: zones ?? flatGround, receptors };
+}
+
+/** The Terrain column: the A-weighted shielding, or why there is not one yet. */
+function terrainCell(s: Scenario, id: string): string {
+  if (!s.terrain.enabled) return '—';
+  const t = receptorTerrain.get(id);
+  if (!t || t.status === 'pending') return '<span class="tag">terrain…</span>';
+  if (t.status === 'failed') return `<span class="tag warn" title="${escapeHtml(NO_DATA_TIP)}">no terrain data</span>`;
+  return t.shielding.la >= 0.5 ? `−${t.shielding.la.toFixed(0)} dB` : '0';
+}
+
+// Elevation profile drawing. Plain SVG, no library: distance across, elevation up.
+const SVG_W = 320;
+const SVG_H = 120;
+const SVG_PAD_X = 5;
+const SVG_PAD_TOP = 16;
+const SVG_PAD_BOTTOM = 14;
+
+function profileSvg(profile: ProfilePoint[], a: ShieldingAnalysis, t: Scenario['terrain']): string {
+  const last = profile[profile.length - 1];
+  const span = last.distanceM;
+  const zSource = profile[0].elevationM + t.sourceHeightM;
+  const zReceiver = last.elevationM + t.receiverHeightM;
+  const elevations = profile.map((pt) => pt.elevationM);
+  const lo = Math.min(...elevations, zSource, zReceiver);
+  // A flat line would otherwise be drawn with an absurd vertical exaggeration.
+  const range = Math.max(Math.max(...elevations, zSource, zReceiver) - lo, 10);
+  const x = (d: number) => SVG_PAD_X + (span > 0 ? d / span : 0) * (SVG_W - 2 * SVG_PAD_X);
+  const y = (z: number) => SVG_H - SVG_PAD_BOTTOM - ((z - lo) / range) * (SVG_H - SVG_PAD_TOP - SVG_PAD_BOTTOM);
+  const n = (v: number) => v.toFixed(1);
+
+  const ground = profile.map((pt) => `${n(x(pt.distanceM))},${n(y(pt.elevationM))}`).join(' ');
+  const base = SVG_H - SVG_PAD_BOTTOM;
+  const ridge = a.index >= 0 ? profile[a.index] : null;
+  const crest =
+    ridge && a.deltaM > 0
+      ? `<line class="tick" x1="${n(x(ridge.distanceM))}" y1="${n(y(ridge.elevationM))}" x2="${n(
+          x(ridge.distanceM),
+        )}" y2="${n(base)}" /><circle class="crest" cx="${n(x(ridge.distanceM))}" cy="${n(y(ridge.elevationM))}" r="3" />`
+      : '';
+
+  return `<svg viewBox="0 0 ${SVG_W} ${SVG_H}" role="img" aria-label="Elevation profile from the stage to this receptor">
+    <polygon class="ground" points="${n(x(0))},${n(base)} ${ground} ${n(x(span))},${n(base)}" />
+    <polyline class="skyline" points="${ground}" />
+    <line class="sight" x1="${n(x(0))}" y1="${n(y(zSource))}" x2="${n(x(span))}" y2="${n(y(zReceiver))}" />
+    ${crest}
+    <circle class="end" cx="${n(x(0))}" cy="${n(y(zSource))}" r="2.5" />
+    <circle class="end" cx="${n(x(span))}" cy="${n(y(zReceiver))}" r="2.5" />
+  </svg>`;
+}
+
+function renderProfile(s: Scenario): void {
+  const box = $('rec-profile');
+  const r = selectedReceptor ? s.receptors.find((x) => x.id === selectedReceptor) : undefined;
+  if (!r || !s.stage || !s.terrain.enabled) {
+    box.hidden = true;
+    box.innerHTML = '';
+    return;
+  }
+  box.hidden = false;
+  const t = receptorTerrain.get(r.id);
+  const head = `<div class="hint profile-head">${escapeHtml(r.name)} · ground profile from the stage</div>`;
+  if (!t || t.status === 'pending') {
+    box.innerHTML = `${head}<div class="hint">fetching the elevation profile…</div>`;
+    return;
+  }
+  if (t.status === 'failed' || !t.profile || !t.analysis) {
+    box.innerHTML = `${head}<div class="hint">${escapeHtml(NO_DATA_TIP)}</div>`;
+    return;
+  }
+  const a = t.analysis;
+  const crest = a.index >= 0 ? t.profile[a.index] : null;
+  const verdict =
+    a.deltaM > 0 && crest
+      ? `ridge at ${formatDistance(crest.distanceM)}, ${crest.elevationM.toFixed(0)} m · path difference ${a.deltaM.toFixed(
+          2,
+        )} m · −${a.la.toFixed(1)} dB(A), −${a.lc.toFixed(1)} dB bass`
+      : 'clear line of sight · no shielding';
+  box.innerHTML = `${head}${profileSvg(t.profile, a, s.terrain)}<div class="hint">${verdict}</div>`;
+}
+
 function render() {
   const s = scenario;
   const p = s.rig;
@@ -281,6 +438,26 @@ function render() {
   $<HTMLInputElement>('bass').value = String(p.bassExcess);
   $<HTMLInputElement>('aim').disabled = !p.directional;
   $<HTMLSelectElement>('subs').disabled = !p.directional;
+  $<HTMLInputElement>('terrain').checked = s.terrain.enabled;
+  $<HTMLInputElement>('src-h').value = String(s.terrain.sourceHeightM);
+  $<HTMLInputElement>('rcv-h').value = String(s.terrain.receiverHeightM);
+  $<HTMLInputElement>('src-h').disabled = !s.terrain.enabled;
+  $<HTMLInputElement>('rcv-h').disabled = !s.terrain.enabled;
+
+  // Terrain. Receptors are fetched as they appear; the zone grid is only built on request and
+  // is keyed by the stage position, so moving the stage drops back to flat contours.
+  const overlay = buildOverlay(s);
+  const zoneTerrain = overlay.shieldingAt !== flatGround;
+  const zoneBtn = $<HTMLButtonElement>('terrain-zones');
+  zoneBtn.disabled = !s.stage || !s.terrain.enabled || zoneBusy || zoneTerrain;
+  zoneBtn.textContent = zoneTerrain ? 'Zones use terrain' : 'Apply terrain to zones';
+  $('terrain-zones-state').textContent = zoneBusy
+    ? zoneProgress
+    : zoneError
+      ? zoneError
+      : zoneTerrain
+        ? `within ${formatDistance(ZONE_RANGE_M)} of the stage`
+        : '';
 
   // Legend
   const legend = $('legend');
@@ -307,13 +484,14 @@ function render() {
     li.textContent = `A‑weighted contours at ${RING_LEVELS.join(', ')} dB(A), in the direction the stacks face`;
     legend.appendChild(li);
   }
+  $('legend-terrain').textContent = zoneTerrain ? 'zones include terrain' : 'zones assume flat ground';
 
   // KPIs
   const target = s.zoneMode === 'legal' ? s.limitDb : s.zoneMode === 'audibility' ? 45 : 60;
   $('k-reach-label').textContent = s.zoneMode === 'legal' ? `${s.limitDb} dB(A)` : s.zoneMode === 'audibility' ? '45 dB(A), clearly audible' : '60 dB(A)';
   if (s.stage) {
-    const front = reachDistance(p, target, p.aimDeg);
-    const back = reachDistance(p, target, p.aimDeg + 180);
+    const front = shieldedReach(p, target, p.aimDeg, 'la', overlay.shieldingAt);
+    const back = shieldedReach(p, target, p.aimDeg + 180, 'la', overlay.shieldingAt);
     $('k-reach').textContent = formatDistance(front);
     $('k-reach-hint').textContent = p.directional ? `in front · ${formatDistance(back)} behind the stacks` : 'in every direction';
   } else {
@@ -329,7 +507,7 @@ function render() {
     const rows = s.receptors
       .map((r) => {
         const { distance, bearing } = distanceBearing(s.stage as LatLon, r);
-        const lv = levelAt(p, distance, bearing);
+        const lv = levelAt(p, distance, bearing, overlay.receptors.get(r.id));
         return { r, distance, bearing, lv };
       })
       .sort((a, b) => a.distance - b.distance);
@@ -337,13 +515,15 @@ function render() {
       if (!nearest || distance < nearest.d) nearest = { name: r.name, d: distance, la: lv.la, lc: lv.lc };
       const tone = s.zoneMode === 'legal' ? (lv.la >= s.limitDb ? 'critical' : lv.la >= s.limitDb - 5 ? 'warning' : 'fine') : lv.la >= 60 ? 'critical' : lv.la >= 45 ? 'warning' : 'fine';
       const tr = document.createElement('tr');
-      tr.innerHTML = `<td><button class="link" data-focus="${r.id}" title="Show on map"><span class="pill" style="background:var(--zone-${tone})"></span>${escapeHtml(r.name)}</button><div class="hint" style="margin:0">${compass(bearing)} · ${formatLatLon(r, 4)}</div></td><td class="num">${formatDistance(distance)}</td><td class="num">${lv.la.toFixed(0)}</td><td class="num">${lv.lc.toFixed(0)}</td><td><button class="btn small ghost" data-del="${r.id}" title="Remove">×</button></td>`;
+      if (r.id === selectedReceptor) tr.className = 'selected';
+      tr.innerHTML = `<td><button class="link" data-focus="${r.id}" title="Show the profile and the marker"><span class="pill" style="background:var(--zone-${tone})"></span>${escapeHtml(r.name)}</button><div class="hint" style="margin:0">${compass(bearing)} · ${formatLatLon(r, 4)}</div></td><td class="num">${formatDistance(distance)}</td><td class="num">${lv.la.toFixed(0)}</td><td class="num">${lv.lc.toFixed(0)}</td><td class="num">${terrainCell(s, r.id)}</td><td><button class="btn small ghost" data-del="${r.id}" title="Remove">×</button></td>`;
       tb.appendChild(tr);
     }
   }
   if (!tb.children.length) {
-    tb.innerHTML = `<tr><td colspan="5" class="hint" style="margin:0">${s.stage ? 'Add the nearest houses, the village edge, the campsite reception.' : 'Place the stage first.'}</td></tr>`;
+    tb.innerHTML = `<tr><td colspan="6" class="hint" style="margin:0">${s.stage ? 'Add the nearest houses, the village edge, the campsite reception.' : 'Place the stage first.'}</td></tr>`;
   }
+  renderProfile(s);
   if (nearest) {
     $('k-near').textContent = `${nearest.la.toFixed(0)} dB(A)`;
     $('k-near-hint').textContent = `${nearest.name}, ${formatDistance(nearest.d)} · bass ${nearest.lc.toFixed(0)} dB(C)`;
@@ -352,9 +532,9 @@ function render() {
     $('k-near-hint').textContent = 'add a house';
   }
 
-  soundMap.render(s);
+  soundMap.render(s, overlay);
   if (fitPending && s.stage) {
-    soundMap.fitScenario(s);
+    soundMap.fitScenario(s, overlay);
     fitPending = false;
   }
   persist();

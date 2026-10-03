@@ -54,6 +54,7 @@
             <select id="limit"></select>
           </div>
           <ul class="legend" id="legend"></ul>
+          <div class="hint" id="legend-terrain">zones assume flat ground</div>
         </section>
 
         <section class="block">
@@ -69,10 +70,11 @@
           </div>
           <div class="tablewrap">
             <table id="rec-table">
-              <thead><tr><th>Name</th><th class="num">Dist.</th><th class="num">dB(A)</th><th class="num">Bass</th><th></th></tr></thead>
+              <thead><tr><th>Name</th><th class="num">Dist.</th><th class="num">dB(A)</th><th class="num">Bass</th><th class="num">Terrain</th><th></th></tr></thead>
               <tbody></tbody>
             </table>
           </div>
+          <div id="rec-profile" class="profile" hidden></div>
         </section>
 
         <details class="block" id="adjust">
@@ -89,6 +91,16 @@
           <label class="toggle"><input type="checkbox" id="night" /> Still night / downwind / inversion (+5 dB far away)</label>
           <label class="toggle"><input type="checkbox" id="show-bass" /> Show the bass contour (bass carries for kilometres)</label>
           <label class="toggle"><input type="checkbox" id="soft" /> Soft ground between stage and houses (−2 dB beyond 200 m)</label>
+          <label class="toggle"><input type="checkbox" id="terrain" /> Terrain shielding from the real elevation profile</label>
+          <div class="row" id="terrain-heights">
+            <div class="field"><label for="src-h">Stacks above ground, m</label><input type="number" id="src-h" min="0" max="100" step="0.5" /></div>
+            <div class="field"><label for="rcv-h">Receiver above ground, m</label><input type="number" id="rcv-h" min="0" max="100" step="0.5" /></div>
+          </div>
+          <div class="row">
+            <button id="terrain-zones" class="btn">Apply terrain to zones</button>
+            <span class="val muted" id="terrain-zones-state"></span>
+          </div>
+          <p class="hint">Receptors get terrain automatically. The zones need a few thousand elevation samples, so they stay flat until you ask. Elevations come from the Copernicus DEM (90 m) via Open‑Meteo: good for ridges and cliffs, blind to walls, hedges and buildings.</p>
           <div class="row">
             <div class="field"><label for="max">Rig max, dB(A) at 10 m</label><input type="number" id="max" step="1" /></div>
             <div class="field"><label for="bass">Bass excess, dB(C) − dB(A)</label><input type="number" id="bass" step="1" /></div>
@@ -119,7 +131,7 @@
         </section>
 
         <footer class="block foot">
-          <p>Model: −6 dB per doubling of distance from 10 m, air absorption, soft‑ground and night terms, horn directivity. Not modelled: hills, cliffs, buildings, water. A cliff between stage and village can take 10–20 dB off; a valley can carry sound further. A deroga needs a <em>tecnico competente in acustica</em>.</p>
+          <p>Model: −6 dB per doubling of distance from 10 m, air absorption, soft‑ground and night terms, horn directivity, and single‑edge terrain diffraction from the Copernicus DEM. Not modelled: buildings, walls, vegetation, water reflections, multiple ridges. A deroga needs a <em>tecnico competente in acustica</em>.</p>
         </footer>
       </aside>
       <main class="mapwrap">

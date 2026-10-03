@@ -1,9 +1,31 @@
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { levelAt, reachDistance } from './acoustics';
+import { levelAt, type Levels } from './acoustics';
 import { destination, distanceBearing, formatDistance, type LatLon } from './geo';
+import { NO_SHIELDING } from './terrain';
 import type { Receptor, Scenario } from './state';
-import { AUDIBILITY_BANDS, RING_LEVELS, bandPolygons, contourRing, legalBands, maxReach, type ZoneBand } from './zones';
+import {
+  AUDIBILITY_BANDS,
+  RING_LEVELS,
+  bandPolygons,
+  contourRing,
+  flatGround,
+  legalBands,
+  maxReach,
+  shieldedReach,
+  type ShieldingAt,
+  type ZoneBand,
+} from './zones';
+
+/** What the renderer knows about terrain. Omit it entirely for flat ground. */
+export interface TerrainOverlay {
+  /** Applied to the zone contours. `flatGround` until the user asks for terrain on the zones. */
+  shieldingAt: ShieldingAt;
+  /** dB to subtract at each receptor, by receptor id. Missing means none known. */
+  receptors: Map<string, Levels>;
+}
+
+const FLAT: TerrainOverlay = { shieldingAt: flatGround, receptors: new Map() };
 
 export interface MapCallbacks {
   onStageMoved(p: LatLon): void;
@@ -47,6 +69,9 @@ export class SoundMap {
       }),
     };
     this.layers.satellite.addTo(this.map);
+    this.map.attributionControl.addAttribution(
+      'Elevation <a href="https://open-meteo.com/">Open‑Meteo</a> (CC BY 4.0), Copernicus DEM',
+    );
     L.control.scale({ metric: true, imperial: false }).addTo(this.map);
     this.zones.addTo(this.map);
     this.rings.addTo(this.map);
@@ -73,7 +98,7 @@ export class SoundMap {
     this.map.fitBounds(L.latLngBounds(pts), { padding: [24, 24] });
   }
 
-  render(s: Scenario) {
+  render(s: Scenario, terrain: TerrainOverlay = FLAT) {
     this.zones.clearLayers();
     this.rings.clearLayers();
     this.receptorLayer.clearLayers();
@@ -89,18 +114,19 @@ export class SoundMap {
     }
     const stage = s.stage;
     const p = s.rig;
+    const shieldingAt = terrain.shieldingAt;
 
     // Zones
     if (s.zoneMode === 'rings') {
       for (const lvl of RING_LEVELS) {
-        const ring = contourRing(stage, p, lvl);
+        const ring = contourRing(stage, p, lvl, 'la', shieldingAt);
         const poly = L.polygon(ring.map(toLL), {
           color: toneColor('ring'),
           weight: lvl === 60 ? 2.5 : 1.5,
           fill: false,
           dashArray: lvl <= 50 ? '6 5' : undefined,
         }).addTo(this.rings);
-        const tip = destination(stage, p.aimDeg, reachDistance(p, lvl, p.aimDeg));
+        const tip = destination(stage, p.aimDeg, shieldedReach(p, lvl, p.aimDeg, 'la', shieldingAt));
         L.marker(toLL(tip), {
           icon: L.divIcon({ className: 'ring-label', html: `${lvl} dB(A)`, iconSize: undefined }),
           interactive: false,
@@ -109,7 +135,7 @@ export class SoundMap {
       }
     } else {
       const bands = s.zoneMode === 'legal' ? legalBands(s.limitDb) : AUDIBILITY_BANDS;
-      for (const { band, outer, hole } of bandPolygons(stage, p, bands)) {
+      for (const { band, outer, hole } of bandPolygons(stage, p, bands, 'la', shieldingAt)) {
         const rings: L.LatLngExpression[][] = hole ? [outer.map(toLL), hole.map(toLL)] : [outer.map(toLL)];
         L.polygon(rings, {
           color: toneColor(band.tone),
@@ -125,7 +151,7 @@ export class SoundMap {
       if (s.showBass) {
         const innermost = Math.max(...bands.map((b) => b.lower));
         const bassDb = innermost + 15;
-        L.polygon(contourRing(stage, p, bassDb, 'lc').map(toLL), {
+        L.polygon(contourRing(stage, p, bassDb, 'lc', shieldingAt).map(toLL), {
           color: toneColor('bass'),
           weight: 1.5,
           dashArray: '6 5',
@@ -150,7 +176,7 @@ export class SoundMap {
     }
 
     // Aim handle: a draggable point 25% of the way to the limit contour, in the aim direction
-    const aimDist = Math.max(60, reachDistance(p, s.zoneMode === 'legal' ? s.limitDb : 60, p.aimDeg) * 0.25);
+    const aimDist = Math.max(60, shieldedReach(p, s.zoneMode === 'legal' ? s.limitDb : 60, p.aimDeg, 'la', shieldingAt) * 0.25);
     const aimPoint = destination(stage, p.aimDeg, aimDist);
     if (!this.aimHandle) {
       this.aimHandle = L.marker(toLL(aimPoint), {
@@ -184,10 +210,13 @@ export class SoundMap {
       this.aimLine.setStyle({ opacity: 0.9 });
     }
 
-    // Receptors
+    // Receptors. The shielded level is the one shown and coloured; the flat one is kept in
+    // brackets so the terrain's contribution is visible.
     for (const r of s.receptors) {
       const { distance, bearing } = distanceBearing(stage, r);
-      const lv = levelAt(p, distance, bearing);
+      const shielding = terrain.receptors.get(r.id) ?? NO_SHIELDING;
+      const lv = levelAt(p, distance, bearing, shielding);
+      const flat = levelAt(p, distance, bearing);
       const limit = s.limitDb;
       const tone = s.zoneMode === 'legal' ? (lv.la >= limit ? 'critical' : lv.la >= limit - 5 ? 'warning' : 'fine') : lv.la >= 60 ? 'critical' : lv.la >= 45 ? 'warning' : 'fine';
       const m = L.marker(toLL(r), {
@@ -199,8 +228,13 @@ export class SoundMap {
           iconAnchor: [7, 7],
         }),
       }).addTo(this.receptorLayer);
+      const aside = (shielded: number, open: number) =>
+        Math.abs(open - shielded) >= 1 ? ` <span class="muted">(flat ${open.toFixed(1)})</span>` : '';
       m.bindTooltip(
-        `${escapeHtml(r.name)}<br>${formatDistance(distance)} · ${bearing.toFixed(0)}°<br>${lv.la.toFixed(1)} dB(A) · bass ${lv.lc.toFixed(1)} dB(C)`,
+        `${escapeHtml(r.name)}<br>${formatDistance(distance)} · ${bearing.toFixed(0)}°<br>${lv.la.toFixed(1)} dB(A)${aside(
+          lv.la,
+          flat.la,
+        )} · bass ${lv.lc.toFixed(1)} dB(C)${aside(lv.lc, flat.lc)}`,
         { direction: 'top', offset: [0, -8] },
       );
       m.on('dragend', () => this.cb.onReceptorMoved(r.id, fromLL(m.getLatLng())));
@@ -209,10 +243,10 @@ export class SoundMap {
   }
 
   /** Fit the view to the current scenario once (after load or when the stage is first placed). */
-  fitScenario(s: Scenario) {
+  fitScenario(s: Scenario, terrain: TerrainOverlay = FLAT) {
     if (!s.stage) return;
     const levels = s.zoneMode === 'legal' ? [s.limitDb - 10] : s.zoneMode === 'audibility' ? [35] : [45];
-    this.fitTo(s.stage, maxReach(s.rig, levels), s.receptors);
+    this.fitTo(s.stage, maxReach(s.rig, levels, 'la', terrain.shieldingAt), s.receptors);
   }
 
   focusReceptor(id: string) {

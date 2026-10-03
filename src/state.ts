@@ -1,11 +1,27 @@
 import { DEFAULT_RIG, type RigParams } from './acoustics';
 import type { LatLon } from './geo';
+import { DEFAULT_RECEIVER_HEIGHT_M, DEFAULT_SOURCE_HEIGHT_M } from './terrain';
 import type { ZoneMode } from './zones';
 
 export interface Receptor extends LatLon {
   id: string;
   name: string;
 }
+
+export interface TerrainSettings {
+  /** Subtract terrain shielding from the predicted levels. */
+  enabled: boolean;
+  /** Height of the stacks above the ground at the stage, metres. */
+  sourceHeightM: number;
+  /** Height of the receiver above the ground, metres. A first‑floor window is about 4 m. */
+  receiverHeightM: number;
+}
+
+export const DEFAULT_TERRAIN: TerrainSettings = {
+  enabled: true,
+  sourceHeightM: DEFAULT_SOURCE_HEIGHT_M,
+  receiverHeightM: DEFAULT_RECEIVER_HEIGHT_M,
+};
 
 export interface Scenario {
   version: 1;
@@ -20,6 +36,7 @@ export interface Scenario {
   layer: 'satellite' | 'streets';
   /** Draw the dashed bass contour. Off by default: bass carries for kilometres and swamps the map. */
   showBass: boolean;
+  terrain: TerrainSettings;
 }
 
 export const LIMITS: { value: number; label: string }[] = [
@@ -42,6 +59,7 @@ export function newScenario(): Scenario {
     receptors: [],
     layer: 'satellite',
     showBass: false,
+    terrain: { ...DEFAULT_TERRAIN },
   };
 }
 
@@ -125,6 +143,17 @@ export function sanitize(input: unknown): Scenario | null {
         }))
     : [];
   const zoneMode: ZoneMode = o.zoneMode === 'audibility' || o.zoneMode === 'rings' ? o.zoneMode : 'legal';
+  // Scenarios saved before terrain existed have no `terrain` key: give them the defaults.
+  const terrainIn = (o.terrain && typeof o.terrain === 'object' ? o.terrain : {}) as Record<string, unknown>;
+  const height = (v: unknown, d: number) => {
+    const n = num(v, d);
+    return n >= 0 && n <= 200 ? n : d;
+  };
+  const terrain: TerrainSettings = {
+    enabled: typeof terrainIn.enabled === 'boolean' ? terrainIn.enabled : DEFAULT_TERRAIN.enabled,
+    sourceHeightM: height(terrainIn.sourceHeightM, DEFAULT_TERRAIN.sourceHeightM),
+    receiverHeightM: height(terrainIn.receiverHeightM, DEFAULT_TERRAIN.receiverHeightM),
+  };
   return {
     version: 1,
     name: typeof o.name === 'string' ? o.name : '',
@@ -135,5 +164,6 @@ export function sanitize(input: unknown): Scenario | null {
     receptors,
     layer: o.layer === 'streets' ? 'streets' : 'satellite',
     showBass: o.showBass === true,
+    terrain,
   };
 }

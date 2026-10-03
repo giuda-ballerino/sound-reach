@@ -122,6 +122,21 @@ td button.link:hover { text-decoration: underline; }
 .side-toggle { display: none; position: absolute; z-index: 1000; left: 10px; top: calc(10px + env(safe-area-inset-top, 0px)); }
 .pick-banner { position: absolute; z-index: 1000; left: 50%; transform: translateX(-50%); top: calc(12px + env(safe-area-inset-top, 0px)); background: var(--accent); color: var(--accent-ink); padding: 8px 14px; border-radius: 999px; font-weight: 600; font-size: 0.9rem; box-shadow: 0 2px 10px rgba(0,0,0,.25); }
 
+/* Terrain: status tags in the receptor table and the inline elevation profile */
+.tag { display: inline-block; font-size: 0.68rem; line-height: 1.5; padding: 0 5px; border-radius: 4px; background: var(--soft); color: var(--muted); border: 1px solid var(--line); font-family: var(--sans); letter-spacing: 0.02em; white-space: nowrap; }
+.tag.warn { color: var(--zone-critical); border-color: color-mix(in srgb, var(--zone-critical) 45%, var(--line)); background: color-mix(in srgb, var(--zone-critical) 10%, transparent); cursor: help; }
+tr.selected { background: var(--soft); }
+
+.profile { margin-top: 10px; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px 6px; }
+.profile .profile-head { margin: 0 0 4px; color: var(--fg); }
+.profile svg { display: block; width: 100%; height: auto; }
+.profile .ground { fill: color-mix(in srgb, var(--accent) 22%, transparent); stroke: none; }
+.profile .skyline { fill: none; stroke: var(--accent); stroke-width: 1.2; stroke-linejoin: round; }
+.profile .sight { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 4 3; }
+.profile .tick { stroke: var(--zone-critical); stroke-width: 1; stroke-dasharray: 2 2; }
+.profile .crest { fill: var(--zone-critical); }
+.profile .end { fill: var(--fg); }
+
 /* Leaflet marker styling */
 .stage-icon span { display: block; width: 18px; height: 18px; border-radius: 50%; background: #ffffff; border: 3px solid #111; box-shadow: 0 0 0 2px rgba(255,255,255,.6); }
 .aim-icon span { display: block; width: 14px; height: 14px; border-radius: 50%; background: #111; border: 3px solid #ffffff; cursor: grab; }

@@ -7,8 +7,9 @@
  *  - ground attenuation over soft terrain beyond 200 m
  *  - a favourable‑propagation term (still night, downwind, inversion)
  *  - horizontal directivity of horn‑loaded tops; subs omni or cardioid
+ *  - optional terrain shielding, supplied per band by the caller (see `terrain.ts`)
  *
- * All numbers are estimates (±5 dB). Terrain, barriers and reflections are not modelled.
+ * All numbers are estimates (±5 dB). Reflections and buildings are not modelled.
  */
 
 export type SubMode = 'omni' | 'cardioid';
@@ -87,8 +88,9 @@ export interface Levels {
 /**
  * Predicted level at a distance (m) along a bearing (deg from north).
  * Pass `bearingDeg = undefined` for the on‑axis value.
+ * `shielding` is dB to subtract per band for terrain in the way; see `terrain.ts`.
  */
-export function levelAt(p: RigParams, distanceM: number, bearingDeg?: number): Levels {
+export function levelAt(p: RigParams, distanceM: number, bearingDeg?: number, shielding?: Levels): Levels {
   const d = Math.max(distanceM, REF_DISTANCE);
   const l10 = sourceLevel(p);
   const spread = -20 * Math.log10(d / REF_DISTANCE);
@@ -97,9 +99,17 @@ export function levelAt(p: RigParams, distanceM: number, bearingDeg?: number): L
   const off = bearingDeg === undefined ? 0 : offAxisAngle(bearingDeg, p.aimDeg);
   const dirTops = p.directional ? topsDirectivity(off) : 0;
   const dirSubs = p.directional ? subsDirectivity(off, p.subs) : 0;
-  const la = l10 + spread - (ABSORPTION_A_PER_100M * (d - REF_DISTANCE)) / 100 + ground + night + dirTops;
+  const la =
+    l10 + spread - (ABSORPTION_A_PER_100M * (d - REF_DISTANCE)) / 100 + ground + night + dirTops - (shielding?.la ?? 0);
   const lc =
-    l10 + p.bassExcess + spread - (ABSORPTION_BASS_PER_100M * (d - REF_DISTANCE)) / 100 + ground * 0.5 + night + dirSubs;
+    l10 +
+    p.bassExcess +
+    spread -
+    (ABSORPTION_BASS_PER_100M * (d - REF_DISTANCE)) / 100 +
+    ground * 0.5 +
+    night +
+    dirSubs -
+    (shielding?.lc ?? 0);
   return { la, lc };
 }
 
