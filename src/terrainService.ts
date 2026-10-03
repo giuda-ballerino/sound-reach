@@ -1,6 +1,6 @@
 /**
- * Glue between the elevation API and the terrain model: the impure half that fetches, caches
- * and debounces, so `terrain.ts` can stay pure and `main.ts` can stay DOM wiring.
+ * Glue between the elevation source and the terrain model: the impure half that fetches,
+ * caches and debounces, so `terrain.ts` can stay pure and `main.ts` can stay DOM wiring.
  *
  * Two jobs:
  *  - receptors, automatically: one profile per receptor, recomputed as they are dragged;
@@ -9,7 +9,7 @@
  */
 
 import type { Levels } from './acoustics';
-import type { ElevationService, FetchProgress } from './elevation';
+import type { ElevationSource, FetchProgress } from './elevationSource';
 import { destination, type LatLon } from './geo';
 import {
   NO_SHIELDING,
@@ -119,7 +119,7 @@ export class TerrainService {
   private timer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
-    private readonly elevation: ElevationService,
+    private readonly elevation: ElevationSource,
     /** Called once after a batch of profiles resolves, so the app can re‑render. */
     private readonly onUpdate: () => void,
     private readonly debounceMs = DEBOUNCE_MS,

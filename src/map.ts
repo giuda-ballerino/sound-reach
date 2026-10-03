@@ -70,7 +70,8 @@ export class SoundMap {
     };
     this.layers.satellite.addTo(this.map);
     this.map.attributionControl.addAttribution(
-      'Elevation <a href="https://open-meteo.com/">Open‑Meteo</a> (CC BY 4.0), Copernicus DEM',
+      'Elevation <a href="https://github.com/tilezen/joerd/blob/master/docs/attribution.md">Tilezen Terrain Tiles</a>' +
+        ' (EU‑DEM © European Union/Copernicus, SRTM &amp; GMTED2010 courtesy USGS), <a href="https://open-meteo.com/">Open‑Meteo</a>',
     );
     L.control.scale({ metric: true, imperial: false }).addTo(this.map);
     this.zones.addTo(this.map);

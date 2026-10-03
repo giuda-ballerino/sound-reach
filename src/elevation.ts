@@ -2,6 +2,11 @@
  * Ground elevations from the Open‑Meteo Elevation API (Copernicus DEM GLO‑90, ~90 m posts).
  * Free, no key, CORS‑enabled; up to 100 coordinate pairs per call.
  *
+ * This is the FALLBACK source. One point costs one slot in a 100-point request, so a zone grid
+ * is dozens of calls and dragging burns the per-IP rate limit; `demTiles.ts` is the primary.
+ * Kept because it is a different DEM from a different host, so it still answers when the tile
+ * mosaic does not.
+ *
  *   GET https://api.open-meteo.com/v1/elevation?latitude=38.1,38.2&longitude=12.7,12.8
  *   → {"elevation":[123.0,456.0]}
  *
@@ -12,6 +17,7 @@
  * `ElevationError` so callers can fall back to flat terrain instead of showing nothing.
  */
 
+import type { ElevationSource, FetchProgress } from './elevationSource';
 import type { LatLon } from './geo';
 
 /** Coordinates per request, as documented by Open‑Meteo. */
@@ -73,11 +79,7 @@ function chunk<T>(items: T[], size: number): T[][] {
   return out;
 }
 
-export interface FetchProgress {
-  (done: number, total: number): void;
-}
-
-export class ElevationService {
+export class ElevationService implements ElevationSource {
   /** Insertion‑ordered, so the first keys are the oldest and get dropped first. */
   private readonly cache = new Map<string, number>();
   private readonly fetchImpl: typeof fetch;
@@ -223,6 +225,3 @@ export class ElevationService {
     }
   }
 }
-
-/** The instance the app uses. Tests build their own with a stub fetch. */
-export const elevationService = new ElevationService();

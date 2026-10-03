@@ -2,7 +2,7 @@
 
 A map tool for choosing a festival site: place the stage, set the volume as a percentage of what the rig can do, and see how far the sound carries and which houses fall in the red. Built for a 4× Funktion-One Evo 2 / 8× F121 system, adjustable to any rig.
 
-Static site: Vite + TypeScript + Leaflet. No backend, no keys. Map tiles come from Esri World Imagery (satellite) and OpenStreetMap (streets), ground elevations from the Open-Meteo Elevation API; everything else runs in the browser. Scenarios are kept in `localStorage` and can be exported/imported as JSON.
+Static site: Vite + TypeScript + Leaflet. No backend, no keys. Map tiles come from Esri World Imagery (satellite) and OpenStreetMap (streets), ground elevations from open terrain tiles; everything else runs in the browser. Scenarios are kept in `localStorage` and can be exported/imported as JSON.
 
 ## Run locally
 
@@ -61,7 +61,11 @@ Measure the rig once with an SPL meter (a phone app is fine for this purpose) at
 
 A ridge between the stage and a house is usually the single biggest thing the flat model gets wrong, so Sound Reach reads the real ground and subtracts what it blocks. The code is in `src/terrain.ts` (pure, unit-tested in `src/terrain.test.ts`), the API client in `src/elevation.ts`, and the fetching and caching glue in `src/terrainService.ts`.
 
-**Where the ground comes from.** Elevations are fetched from the [Open-Meteo Elevation API](https://open-meteo.com/en/docs/elevation-api), which serves the Copernicus DEM GLO-90 (90 m posts) — free, no key, 100 coordinates per request. Nothing is sent anywhere else: only bare latitude/longitude pairs leave the browser. Results are cached by coordinate rounded to 5 decimals, in memory and in `localStorage` (20 000 entries, oldest dropped), so moving around a site costs nothing after the first look.
+**Where the ground comes from.** Elevations come from terrain-RGB raster tiles: a 256×256 PNG in which every pixel encodes a height as `(R·256 + G + B/256) − 32768` metres. The source is [Tilezen terrain tiles](https://github.com/tilezen/joerd/blob/master/docs/attribution.md) hosted as AWS Open Data — free, no key, CORS-enabled, and a mosaic of national DEMs (EU-DEM over Europe, SRTM and GMTED2010 elsewhere). The app reads them at zoom 12, about 31 m per pixel at Sicilian latitudes, which is the native resolution of the data underneath.
+
+Tiles are the reason this feature is usable rather than theoretical. One tile carries 65 536 elevations in a single ~90 kB request, so the whole zone grid is a handful of calls and everything afterwards — dragging a house, nudging the stage, adding a receptor — is a local array lookup with no network at all. Decoded tiles are kept in memory (48 of them, oldest dropped); the PNGs themselves are cached by the browser like any other tile.
+
+The [Open-Meteo Elevation API](https://open-meteo.com/en/docs/elevation-api) (Copernicus DEM GLO-90, 90 m) is kept on as a fallback for when the tile mosaic is unreachable. It answers one point per slot in a 100-point request, which is far too chatty to drag against, so it is only used after the tiles have failed — and once it takes over it stays in charge for the session, because mixing two DEMs inside one profile would put a fake step in the ground. Either way, nothing but bare latitude/longitude pairs leaves the browser.
 
 **How the drop is computed.** For each line of interest the app samples the geodesic from stage to receptor at 30 m (at most 100 samples, so one profile is one request) and reads the ground height at every sample. The stacks sit 2 m above the ground at the stage and the receiver 4 m above the ground at the house — a first-floor window, the worst case for a neighbour — and both heights are adjustable in the Adjust panel. The most obstructing sample is treated as a single knife edge: δ is the length of the diffracted path over that crest minus the straight line, in 3D. Maekawa's curve turns δ into an attenuation through the Fresnel number N = 2δ/λ:
 
@@ -76,11 +80,11 @@ The 20 dB ceiling is the ISO 9613-2 cap for a single edge. N = 0, where the cres
 
 **Receptors get it automatically.** Every house in the table is profiled as soon as it is placed, and again 300 ms after you stop dragging it. While a fetch is in flight the table shows the flat value with a `terrain…` tag; if the API cannot be reached it shows the flat value with `no terrain data` and says so on hover. The Terrain column gives the A-weighted drop, and clicking a row draws the elevation profile underneath: the ground, the direct line of sight, and the crest that does the blocking.
 
-**Zones are opt-in.** The contours need thousands of samples, so they stay flat until you press **Apply terrain to zones**. That samples 36 bearings × 60 points (50 m steps out to 3 km), builds a shielding-vs-distance curve for each bearing, and interpolates between the two nearest bearings and the two nearest distances while the contour is traced. The result is cached against the stage position rounded to about 10 m; move the stage and the zones revert to flat until you press the button again. The legend says which of the two you are looking at. Beyond 3 km the last value on each bearing is held: once you are behind a hill you stay behind it.
+**Zones are opt-in.** The contours stay flat until you press **Apply terrain to zones**. That samples 36 bearings × 60 points (50 m steps out to 3 km) — about four tiles' worth of fetching — builds a shielding-vs-distance curve for each bearing, and interpolates between the two nearest bearings and the two nearest distances while the contour is traced. The result is cached against the stage position rounded to about 10 m; move the stage and the zones revert to flat until you press the button again. The legend says which of the two you are looking at. Beyond 3 km the last value on each bearing is held: once you are behind a hill you stay behind it.
 
 ### What terrain does not catch
 
-- **90 m resolution.** The DEM averages a 90 m cell, so garden walls, hedges, embankments, single buildings and narrow gullies are invisible. In a built-up village the real shielding is usually larger than the figure shown.
+- **~30 m resolution.** Each pixel averages roughly a 30 m cell (90 m on the Open-Meteo fallback), so garden walls, hedges, embankments, single buildings and narrow gullies are invisible. In a built-up village the real shielding is usually larger than the figure shown.
 - **One edge only.** Two ridges in a row are treated as the worse of the two, not as two successive diffractions, which under-reads a deep valley.
 - **No ground reflection, no vegetation, no meteorology in the diffraction.** Downwind refraction can bend sound back over a ridge that the geometry says is blocking; the model's generic night term does not know about the ridge.
 - **No buildings.** The DEM is bare earth, so a house behind another house gets no credit for it.
@@ -95,8 +99,11 @@ src/main.ts           UI wiring and rendering
 src/map.ts            Leaflet map, zones, markers, drag handles
 src/acoustics.ts      propagation model (pure functions)
 src/terrain.ts        elevation profiles and Maekawa barrier attenuation (pure functions)
-src/elevation.ts      Open-Meteo elevation client: batching, caching, retries
-src/terrainService.ts fetch/cache/debounce glue between the two
+src/demTiles.ts       terrain-RGB tile client: tile maths, bilinear sampling, tile cache
+src/png.ts            minimal PNG decoder, so tiles are read exactly and without a canvas
+src/elevation.ts      Open-Meteo point API, the fallback elevation source
+src/elevationSource.ts  the shared source interface and the tiering between the two
+src/terrainService.ts fetch/cache/debounce glue between elevations and the model
 src/zones.ts          zone definitions and contour tracing
 src/geo.ts            lat/lon parsing, distance, bearing, destination
 src/state.ts          scenario shape, defaults, localStorage, JSON import sanitising
@@ -106,5 +113,17 @@ public/_headers       Cloudflare Pages headers
 
 ## Licence
 
-MIT. Map data © OpenStreetMap contributors; imagery © Esri, Maxar, Earthstar Geographics, and the GIS user community (used under Esri's free tier terms; attribution is shown on the map). Elevation data from [Open-Meteo](https://open-meteo.com/), licensed [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), derived from the Copernicus DEM GLO-90; attribution is shown on the map alongside the imagery credit.
+MIT. Map data © OpenStreetMap contributors; imagery © Esri, Maxar, Earthstar Geographics, and the GIS user community (used under Esri's free tier terms; attribution is shown on the map).
+
+Elevation data is attributed on the map and in full here, as the providers require:
+
+- Europe terrain data produced using Copernicus data and information funded by the European Union — EU-DEM layers;
+- United States 3DEP (formerly NED) and global GMTED2010 and SRTM terrain data courtesy of the U.S. Geological Survey;
+- Global ETOPO1 terrain data, U.S. National Oceanic and Atmospheric Administration;
+- Canada terrain data contains information licensed under the Open Government Licence — Canada;
+- Austria terrain data © offene Daten Österreichs — Digitales Geländemodell (DGM) Österreich;
+- United Kingdom terrain data © Environment Agency copyright and/or database right 2015, all rights reserved;
+- Norway terrain data © Kartverket; Australia terrain data © Commonwealth of Australia (Geoscience Australia) 2017; New Zealand terrain data © 2011 Crown copyright, Land Information New Zealand; Mexico terrain data source INEGI, Continental relief, 2016; ArcticDEM DEMs created from DigitalGlobe, Inc. imagery and funded under NSF awards 1043681, 1559691 and 1542736.
+
+The [full source list](https://github.com/tilezen/joerd/blob/master/docs/attribution.md) is maintained by the Tilezen project. Fallback elevation data from [Open-Meteo](https://open-meteo.com/), licensed [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), derived from the Copernicus DEM GLO-90.
 # sound-reach

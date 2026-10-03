@@ -100,7 +100,7 @@
             <button id="terrain-zones" class="btn">Apply terrain to zones</button>
             <span class="val muted" id="terrain-zones-state"></span>
           </div>
-          <p class="hint">Receptors get terrain automatically. The zones need a few thousand elevation samples, so they stay flat until you ask. Elevations come from the Copernicus DEM (90 m) via Open‑Meteo: good for ridges and cliffs, blind to walls, hedges and buildings.</p>
+          <p class="hint">Receptors get terrain automatically. The zones are sampled on request and then stay put until the stage moves. Ground heights come from terrain tiles at about 30 m resolution: good for ridges, cliffs and valleys, blind to walls, hedges and buildings.</p>
           <div class="row">
             <div class="field"><label for="max">Rig max, dB(A) at 10 m</label><input type="number" id="max" step="1" /></div>
             <div class="field"><label for="bass">Bass excess, dB(C) − dB(A)</label><input type="number" id="bass" step="1" /></div>

@@ -1,6 +1,8 @@
 import './style.css';
 import { levelAt, sourceLevel, type Levels } from './acoustics';
-import { elevationService } from './elevation';
+import { TerrainTileService } from './demTiles';
+import { ElevationService } from './elevation';
+import { TieredElevation } from './elevationSource';
 import { compass, distanceBearing, formatDistance, formatLatLon, parseLatLon, type LatLon } from './geo';
 import { SoundMap, escapeHtml, type TerrainOverlay } from './map';
 import { LIMITS, loadCurrent, loadLibrary, newScenario, sanitize, saveCurrent, saveLibrary, uid, type Scenario } from './state';
@@ -19,7 +21,13 @@ let zoneBusy = false;
 let zoneProgress = '';
 let zoneError = '';
 
-const terrainService = new TerrainService(elevationService, () => render());
+/**
+ * Terrain-RGB tiles do the work: one tile is 65 536 elevations, so a whole zone grid is a
+ * handful of requests and dragging costs nothing. Open-Meteo's point API stays on as a
+ * fallback for when the tile mosaic is unreachable.
+ */
+const elevation = new TieredElevation(new TerrainTileService(), new ElevationService());
+const terrainService = new TerrainService(elevation, () => render());
 
 const soundMap = new SoundMap($('map'), {
   onStageMoved(p) {
