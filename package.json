@@ -1,0 +1,25 @@
+{
+  "name": "sound-reach",
+  "version": "0.1.0",
+  "description": "Map tool to estimate how far a festival sound system carries and which houses fall in the red",
+  "scripts": {
+    "test": "vitest run",
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "private": "true",
+  "type": "module",
+  "devDependencies": {
+    "@types/leaflet": "^1.9.22",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.2",
+    "vitest": "^5.0.3"
+  },
+  "dependencies": {
+    "leaflet": "^1.9.4"
+  }
+}

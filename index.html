@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Sound Reach</title>
+    <meta name="description" content="How far the rig carries from a given stage, and which houses fall in the red." />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" />
+  </head>
+  <body>
+    <div id="app" class="app">
+      <aside class="side" id="side">
+        <header class="side-head">
+          <h1>Sound Reach</h1>
+          <p class="sub">Where the rig carries, and who hears it. Estimates, ±5 dB.</p>
+        </header>
+
+        <section class="block">
+          <div class="kpis">
+            <div class="kpi"><label>Reach of <span id="k-reach-label">the limit</span></label><div class="big" id="k-reach">—</div><div class="hint" id="k-reach-hint">place the stage on the map</div></div>
+            <div class="kpi"><label>Nearest receptor</label><div class="big" id="k-near">—</div><div class="hint" id="k-near-hint">add a house</div></div>
+          </div>
+        </section>
+
+        <section class="block">
+          <h2>Stage</h2>
+          <div class="row">
+            <input type="text" id="stage-input" placeholder="38.1058, 12.7230" aria-label="Stage coordinates" />
+            <button id="stage-pick" class="btn" title="Click on the map to place the stage">Place on map</button>
+          </div>
+          <div class="hint">Paste coordinates from Google Maps (right‑click a point), or place it on the map and drag.</div>
+        </section>
+
+        <section class="block">
+          <h2>Volume</h2>
+          <input type="range" id="volume" min="10" max="100" step="5" aria-label="Volume percentage" />
+          <div class="row baseline">
+            <span class="big" id="volume-pct">70%</span>
+            <span class="val muted"><span id="l10">—</span> dB(A) at 10 m</span>
+          </div>
+        </section>
+
+        <section class="block">
+          <h2>Zones show</h2>
+          <div class="seg" role="radiogroup" aria-label="Zone meaning">
+            <label><input type="radio" name="zone" value="legal" /><span>Legal limit</span></label>
+            <label><input type="radio" name="zone" value="audibility" /><span>Audibility</span></label>
+            <label><input type="radio" name="zone" value="rings" /><span>dB rings</span></label>
+          </div>
+          <div id="limit-wrap" class="field">
+            <label for="limit">Night limit at the nearest house, dB(A)</label>
+            <select id="limit"></select>
+          </div>
+          <ul class="legend" id="legend"></ul>
+        </section>
+
+        <section class="block">
+          <h2>Houses and receptors</h2>
+          <div class="row">
+            <input type="text" id="rec-name" placeholder="Name" aria-label="Receptor name" />
+            <input type="text" id="rec-pos" placeholder="lat, lon" aria-label="Receptor coordinates" />
+          </div>
+          <div class="row">
+            <button id="rec-add" class="btn primary">Add</button>
+            <button id="rec-pick" class="btn">Click on map</button>
+            <button id="rec-clear" class="btn ghost">Clear</button>
+          </div>
+          <div class="tablewrap">
+            <table id="rec-table">
+              <thead><tr><th>Name</th><th class="num">Dist.</th><th class="num">dB(A)</th><th class="num">Bass</th><th></th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </section>
+
+        <details class="block" id="adjust">
+          <summary>Adjust the model</summary>
+          <div class="field">
+            <label for="aim">Stacks face (° from north) <span class="val" id="aim-val"></span></label>
+            <input type="range" id="aim" min="0" max="359" step="1" />
+          </div>
+          <label class="toggle"><input type="checkbox" id="directional" /> Directional tops (off = omnidirectional source)</label>
+          <div class="field">
+            <label for="subs">Sub arrangement</label>
+            <select id="subs"><option value="omni">Omni (stacks left/right)</option><option value="cardioid">Cardioid (−10 dB behind)</option></select>
+          </div>
+          <label class="toggle"><input type="checkbox" id="night" /> Still night / downwind / inversion (+5 dB far away)</label>
+          <label class="toggle"><input type="checkbox" id="show-bass" /> Show the bass contour (bass carries for kilometres)</label>
+          <label class="toggle"><input type="checkbox" id="soft" /> Soft ground between stage and houses (−2 dB beyond 200 m)</label>
+          <div class="row">
+            <div class="field"><label for="max">Rig max, dB(A) at 10 m</label><input type="number" id="max" step="1" /></div>
+            <div class="field"><label for="bass">Bass excess, dB(C) − dB(A)</label><input type="number" id="bass" step="1" /></div>
+          </div>
+          <p class="hint">4× Funktion‑One Evo 2 on 8× F121: about 110–114 dB(A) at 10 m when driven hard; a comfortable dance floor is 102–106 at the front. Measure once at 10 m with an SPL meter and type it in to calibrate.</p>
+        </details>
+
+        <section class="block">
+          <h2>Scenarios</h2>
+          <div class="row">
+            <input type="text" id="sc-name" placeholder="El Bahira, stage under the cliff" aria-label="Scenario name" />
+            <button id="sc-save" class="btn">Save</button>
+          </div>
+          <div id="sc-list" class="chips"></div>
+          <div class="row">
+            <button id="sc-export" class="btn ghost">Download JSON</button>
+            <label class="btn ghost file">Import JSON<input type="file" id="sc-import" accept="application/json" hidden /></label>
+          </div>
+          <div class="hint">Saved in this browser. Export and share the file to compare notes.</div>
+        </section>
+
+        <section class="block">
+          <h2>Base map</h2>
+          <div class="seg" role="radiogroup" aria-label="Base map">
+            <label><input type="radio" name="layer" value="satellite" /><span>Satellite</span></label>
+            <label><input type="radio" name="layer" value="streets" /><span>Streets</span></label>
+          </div>
+        </section>
+
+        <footer class="block foot">
+          <p>Model: −6 dB per doubling of distance from 10 m, air absorption, soft‑ground and night terms, horn directivity. Not modelled: hills, cliffs, buildings, water. A cliff between stage and village can take 10–20 dB off; a valley can carry sound further. A deroga needs a <em>tecnico competente in acustica</em>.</p>
+        </footer>
+      </aside>
+      <main class="mapwrap">
+        <div id="map" class="map" role="application" aria-label="Map"></div>
+        <button id="side-toggle" class="side-toggle" aria-expanded="true" aria-controls="side">Controls</button>
+        <div id="pick-banner" class="pick-banner" hidden></div>
+      </main>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
