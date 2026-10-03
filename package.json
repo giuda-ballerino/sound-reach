@@ -14,10 +14,12 @@
   "private": "true",
   "type": "module",
   "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.62.5",
     "@types/leaflet": "^1.9.22",
     "typescript": "^7.0.2",
     "vite": "^8.3.2",
-    "vitest": "^5.0.3"
+    "vitest": "^5.0.3",
+    "wrangler": "^4.147.0"
   },
   "dependencies": {
     "leaflet": "^1.9.4"
