@@ -1,6 +1,7 @@
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { levelAt, type Levels } from './acoustics';
+import { CONDITION_PRESETS, WORST_CASE, type Conditions } from './conditions';
 import { destination, distanceBearing, formatDistance, type LatLon } from './geo';
 import { NO_SHIELDING } from './terrain';
 import type { Receptor, Scenario } from './state';
@@ -27,6 +28,20 @@ export interface TerrainOverlay {
 
 const FLAT: TerrainOverlay = { shieldingAt: flatGround, receptors: new Map() };
 
+/**
+ * The condition drawn as a dashed outline on top of the filled zones, whatever is selected.
+ *
+ * Normally that is the ISO worst case, so the envelope a permit has to survive is never off
+ * screen. When the worst case is already the selected condition there is nothing to add by
+ * drawing it twice, so the outline shows a typical night instead and the pair still brackets
+ * the answer.
+ */
+export function outlineCondition(selected: Conditions): { conditions: Conditions; label: string } {
+  return selected.preset === 'worst'
+    ? { conditions: CONDITION_PRESETS.typical, label: 'typical night' }
+    : { conditions: WORST_CASE, label: 'worst case (ISO)' };
+}
+
 export interface MapCallbacks {
   onStageMoved(p: LatLon): void;
   onAimChanged(deg: number): void;
@@ -38,7 +53,7 @@ export interface MapCallbacks {
 const toLL = (p: LatLon): L.LatLngExpression => [p.lat, p.lon];
 const fromLL = (ll: L.LatLng): LatLon => ({ lat: ll.lat, lon: ll.lng });
 
-function toneColor(tone: ZoneBand['tone'] | 'ring' | 'bass'): string {
+function toneColor(tone: ZoneBand['tone'] | 'ring' | 'bass' | 'outline'): string {
   return getComputedStyle(document.documentElement).getPropertyValue(`--zone-${tone}`).trim() || '#888';
 }
 
@@ -164,6 +179,23 @@ export class SoundMap {
       }
     }
 
+    // The other end of the envelope, as a thin dashed ring on top of everything.
+    const outline = outlineCondition(c);
+    const outlineLevel = s.zoneMode === 'legal' ? s.limitDb : 60;
+    const outlineRing = contourRing(stage, p, outline.conditions, outlineLevel, 'la', shieldingAt).map(toLL);
+    // A dark underlay keeps the white dashes readable over pale ground and the streets layer.
+    L.polygon(outlineRing, { color: '#000000', weight: 3.5, opacity: 0.35, fill: false, interactive: false }).addTo(
+      this.zones,
+    );
+    L.polygon(outlineRing, {
+      color: toneColor('outline'),
+      weight: 1.5,
+      dashArray: '3 4',
+      fill: false,
+    })
+      .bindTooltip(`${outline.label} · ${outlineLevel} dB(A)`, { sticky: true })
+      .addTo(this.zones);
+
     // Stage marker (draggable)
     if (!this.stageMarker) {
       this.stageMarker = L.marker(toLL(stage), {
@@ -212,20 +244,22 @@ export class SoundMap {
       this.aimLine.setStyle({ opacity: 0.9 });
     }
 
-    // Receptors. The shielded level is the one shown and coloured; the flat one is kept in
-    // brackets so the terrain's contribution is visible.
+    // Receptors carry two numbers: the selected condition and the worst case. The worst one
+    // picks the colour, because that is the night the derogation has to survive. Terrain
+    // shielding is the same for both — it is geometry, not weather.
     for (const r of s.receptors) {
       const { distance, bearing } = distanceBearing(stage, r);
       const shielding = terrain.receptors.get(r.id) ?? NO_SHIELDING;
       const lv = levelAt(p, c, distance, bearing, shielding);
+      const worst = levelAt(p, WORST_CASE, distance, bearing, shielding);
       const flat = levelAt(p, c, distance, bearing);
       const limit = s.limitDb;
-      const tone = s.zoneMode === 'legal' ? (lv.la >= limit ? 'critical' : lv.la >= limit - 5 ? 'warning' : 'fine') : lv.la >= 60 ? 'critical' : lv.la >= 45 ? 'warning' : 'fine';
+      const tone = s.zoneMode === 'legal' ? (worst.la >= limit ? 'critical' : worst.la >= limit - 5 ? 'warning' : 'fine') : worst.la >= 60 ? 'critical' : worst.la >= 45 ? 'warning' : 'fine';
       const m = L.marker(toLL(r), {
         draggable: true,
         icon: L.divIcon({
           className: `receptor-icon tone-${tone}`,
-          html: `<span></span><label>${escapeHtml(r.name)} · ${lv.la.toFixed(0)} dB(A)</label>`,
+          html: `<span></span><label>${escapeHtml(r.name)} · ${lv.la.toFixed(0)} / ${worst.la.toFixed(0)} dB(A)</label>`,
           iconSize: [14, 14],
           iconAnchor: [7, 7],
         }),
@@ -233,10 +267,9 @@ export class SoundMap {
       const aside = (shielded: number, open: number) =>
         Math.abs(open - shielded) >= 1 ? ` <span class="muted">(flat ${open.toFixed(1)})</span>` : '';
       m.bindTooltip(
-        `${escapeHtml(r.name)}<br>${formatDistance(distance)} · ${bearing.toFixed(0)}°<br>${lv.la.toFixed(1)} dB(A)${aside(
-          lv.la,
-          flat.la,
-        )} · bass ${lv.lc.toFixed(1)} dB(C)${aside(lv.lc, flat.lc)}`,
+        `${escapeHtml(r.name)}<br>${formatDistance(distance)} · ${bearing.toFixed(0)}°` +
+          `<br>${lv.la.toFixed(1)} dB(A)${aside(lv.la, flat.la)} · bass ${lv.lc.toFixed(1)} dB(C)${aside(lv.lc, flat.lc)}` +
+          `<br><span class="muted">worst case ${worst.la.toFixed(1)} dB(A) · bass ${worst.lc.toFixed(1)} dB(C)</span>`,
         { direction: 'top', offset: [0, -8] },
       );
       m.on('dragend', () => this.cb.onReceptorMoved(r.id, fromLL(m.getLatLng())));

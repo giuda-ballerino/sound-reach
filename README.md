@@ -34,9 +34,9 @@ Everything is in `src/acoustics.ts` and is unit-tested in `src/acoustics.test.ts
 The source is described by one number: the A-weighted level at 10 m in front of the stacks when the rig is at its maximum (`maxLevelAt10m`, default 112 dB(A)). The volume slider is a percentage of that maximum; each halving of the percentage is −10 dB, which is roughly "half as loud". From the 10 m reference the level falls by:
 
 - spherical spreading, −20·log10(d/10), i.e. −6 dB per doubling of distance;
-- air absorption, 0.8 dB per 100 m for the A-weighted mix (dominated by 1–4 kHz), 0.05 dB per 100 m for the bass band;
+- air absorption from ISO 9613-1, for the chosen temperature and humidity — see [Weather](#weather);
 - a ground term, −2 dB over soft ground beyond 200 m, phased in to 600 m;
-- a favourable-propagation term, +5 dB beyond ~300 m when "still night / downwind / inversion" is on. This is the condition under which complaints arrive, so it is on by default;
+- refraction by wind and temperature inversion, worth anything from +7 dB downwind to −15 dB in an upwind shadow — again [Weather](#weather);
 - terrain shielding, when a ridge gets in the way — see [Terrain](#terrain) below.
 
 Horizontal directivity: horn-loaded tops are modelled at 0 dB within ±30° of the aim, −6 dB at 90°, −12 dB behind. Subs are omnidirectional, or −10 dB behind when set to cardioid. Turning "directional" off gives a plain omnidirectional source.
@@ -51,11 +51,63 @@ Zones can be read three ways:
 
 ### What it does not model
 
-Terrain shielding is handled separately and described in [Terrain](#terrain). Not modelled at all: buildings, walls, vegetation, reflections off water, humidity and temperature, multiple diffraction, and the actual Funktion-One polar response. A valley or a lake can carry sound further than predicted. Treat every number as ±5 dB and use the tool to compare sites and spot the houses that matter. A noise derogation application needs a *tecnico competente in acustica* with a proper forecast on the real terrain.
+Terrain shielding and weather are handled separately, in [Terrain](#terrain) and [Weather](#weather). Not modelled at all: buildings, walls, vegetation, reflections off water, humidity and temperature, multiple diffraction, and the actual Funktion-One polar response. A valley or a lake can carry sound further than predicted. Treat every number as ±5 dB and use the tool to compare sites and spot the houses that matter. A noise derogation application needs a *tecnico competente in acustica* with a proper forecast on the real terrain.
 
 ### Calibrating
 
 Measure the rig once with an SPL meter (a phone app is fine for this purpose) at 10 m in front of the stacks at the volume you'd use, and type that figure into "Rig max" with the slider at 100%, or set the slider to the matching percentage. Everything else scales from it.
+
+## Weather
+
+Two nights at the same site can differ by more than 20 dB at the same house. Air absorption depends on temperature and humidity, and refraction by wind and temperature structure decides whether the sound is bent back down towards a village or lifted over it. A single number for "the weather" is the wrong shape for the decision this tool supports, so the model always carries two: the condition you selected, and the worst case, side by side everywhere.
+
+### The three conditions
+
+| | Typical | Worst (ISO) | Favourable |
+| --- | --- | --- | --- |
+| Temperature | 18 °C | 15 °C | 25 °C |
+| Humidity | 75 % | 90 % | 35 % |
+| Wind | none | downwind everywhere, 5 m/s | upwind everywhere, 5 m/s |
+| Inversion | no | yes | no |
+| Ground | soft | hard | soft |
+
+**Typical** is a neutral September night in Sicily: damp, still, nothing conspiring. It is the honest default for "what will this probably sound like".
+
+**Worst (ISO)** is not a forecast and will never happen. It is the enveloping convention ISO 9613-2 asks for in a permit calculation: every receptor treated as if it were downwind of the stage at once, under an inversion, over hard reflecting ground. No real wind blows towards every house simultaneously — but a derogation has to hold for whichever house the wind picks tonight, so the forecast has to cover all of them. This is why the worst case is drawn as a dashed outline on top of the zones even when you are looking at something else, why every receptor shows a second number, and why the receptor colours are keyed to it rather than to the selected condition.
+
+**Favourable** is the opposite end of the same envelope, and exists for exactly one reason: to show how wide the envelope is. A site where typical and worst are 8 dB apart is a different proposition from one where they are 25 dB apart, even if the typical number is identical. Do not plan around it.
+
+**Custom** takes your own temperature, humidity, wind speed and wind direction, with the inversion and ground switches. Drag the arrow in the top-right of the map to set which way the wind comes from.
+
+### Air absorption
+
+`src/absorption.ts` implements ISO 9613-1 properly: saturation vapour pressure from the triple-point expression, molar water-vapour concentration, oxygen and nitrogen relaxation frequencies, and the classical, rotational and vibrational terms. It is tested against the published tables to within 10 % at both 10 °C / 70 % and 20 °C / 70 %.
+
+Absorption is strongly frequency-dependent and music is not a pure tone, so the coefficient has to be integrated over a spectrum. The model uses a fixed octave-band shape for a dance rig, in dB relative to the 1 kHz band:
+
+| 63 | 125 | 250 | 500 | 1 k | 2 k | 4 k | 8 k |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| +10 | +7 | +4 | +1 | 0 | 0 | 0 | −4 |
+
+That spectrum is A-weighted, propagated to 500 m, and the resulting dB(A) loss is divided by 4.9 to give an effective dB per 100 m. At 20 °C / 70 % it comes out at **0.798 dB per 100 m**, which is the 0.8 the model used as a hard-coded constant before any of this existed — so old scenarios keep their answers. Across the presets it ranges from 0.74 (15 °C / 90 %) to 0.90 (25 °C / 35 %). The bass figure is simply the 63 Hz coefficient, around 0.01 dB per 100 m: air does essentially nothing to a kick drum, which is why bass is what carries to the next village.
+
+### Wind and inversion
+
+`src/wind.ts` turns wind and stability into one correction in dB. Wind speed increases with height, so downwind the ray paths curve back towards the ground and upwind they curve away and leave a shadow. A night-time inversion does the downwind thing in every direction at once, which is why complaints arrive at two in the morning.
+
+- **θ** is the angle between the direction the sound travels and the direction the wind blows towards. Fully downwind within 45°, tapering to nothing at 90°; fully upwind beyond 135°, tapering to nothing at 90° from the other side.
+- **Speed factor** `(v − 1) / 4`, clamped to 0–1: below 1 m/s the air is effectively still, by 5 m/s the effect has saturated.
+- **Downwind gain**: nothing inside 100 m, +5 dB at 500 m, +7 dB at 1 km and beyond.
+- **Upwind shadow**: opens at 600 m in a light breeze and at 300 m at 5 m/s, deepening over the next 400 m to between −10 and −15 dB.
+- **Inversion**: 0 at 50 m rising to +5 dB at 300 m, in every direction. This is the old "still night" term, unchanged.
+
+Inversion and downwind are combined with `max`, not a sum — both bend rays back to the ground by the same mechanism, and adding them would count it twice. The upwind shadow is added on top, halved when an inversion is working against it.
+
+These are engineering approximations fitted to the numbers ISO 9613-2 and the ground-effect literature use, not a ray tracer. Treat them like the rest of the model: ±5 dB, useful for comparing sites and directions.
+
+### Planned: climatology
+
+The next step is a climatology mode: ten years of September nights for the actual site pulled from the Open-Meteo historical API, replacing "typical" with the median night and adding a 90th-percentile condition, so the envelope comes from that site's own weather rather than from three hand-picked presets.
 
 ## Terrain
 
@@ -98,6 +150,9 @@ index.html            page structure
 src/main.ts           UI wiring and rendering
 src/map.ts            Leaflet map, zones, markers, drag handles
 src/acoustics.ts      propagation model (pure functions)
+src/absorption.ts     ISO 9613-1 atmospheric absorption and the music spectrum
+src/wind.ts           refraction by wind and temperature inversion
+src/conditions.ts     the named weather conditions and their presets
 src/terrain.ts        elevation profiles and Maekawa barrier attenuation (pure functions)
 src/demTiles.ts       terrain-RGB tile client: tile maths, bilinear sampling, tile cache
 src/png.ts            minimal PNG decoder, so tiles are read exactly and without a canvas

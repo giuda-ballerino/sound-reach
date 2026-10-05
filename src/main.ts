@@ -1,10 +1,11 @@
 import './style.css';
 import { levelAt, sourceLevel, type Levels } from './acoustics';
+import { CONDITION_BLURBS, WORST_CASE, applyPreset, type ConditionPreset } from './conditions';
 import { TerrainTileService } from './demTiles';
 import { ElevationService } from './elevation';
 import { TieredElevation } from './elevationSource';
 import { compass, distanceBearing, formatDistance, formatLatLon, parseLatLon, type LatLon } from './geo';
-import { SoundMap, escapeHtml, type TerrainOverlay } from './map';
+import { SoundMap, escapeHtml, outlineCondition, type TerrainOverlay } from './map';
 import { LIMITS, loadCurrent, loadLibrary, newScenario, sanitize, saveCurrent, saveLibrary, uid, type Scenario } from './state';
 import type { ProfilePoint, ShieldingAnalysis } from './terrain';
 import { ZONE_RANGE_M, TerrainService, type ReceptorTerrain } from './terrainService';
@@ -134,18 +135,85 @@ $<HTMLSelectElement>('subs').addEventListener('change', (e) => {
   scenario.rig.subs = (e.target as HTMLSelectElement).value as Scenario['rig']['subs'];
   render();
 });
-$<HTMLInputElement>('night').addEventListener('change', (e) => {
-  scenario.conditions.inversion = (e.target as HTMLInputElement).checked;
-  render();
-});
 $<HTMLInputElement>('show-bass').addEventListener('change', (e) => {
   scenario.showBass = (e.target as HTMLInputElement).checked;
   render();
 });
-$<HTMLInputElement>('soft').addEventListener('change', (e) => {
-  scenario.conditions.groundSoft = (e.target as HTMLInputElement).checked;
+
+// ---------- conditions ----------
+document.querySelectorAll<HTMLInputElement>('input[name="cond"]').forEach((r) =>
+  r.addEventListener('change', () => {
+    scenario.conditions = applyPreset(r.value as ConditionPreset, scenario.conditions);
+    render();
+  }),
+);
+
+/** Typing in any custom field means the conditions are no longer a named preset. */
+function editCustom(change: () => void) {
+  if (scenario.conditions.preset !== 'custom') {
+    scenario.conditions = applyPreset('custom', scenario.conditions);
+  }
+  change();
   render();
+}
+
+const NUMERIC_CONDITIONS = [
+  ['cond-temp', 'temperatureC', -40, 60],
+  ['cond-rh', 'humidityPct', 1, 100],
+  ['cond-wind', 'windSpeedMs', 0, 40],
+  ['cond-dir', 'windFromDeg', -360, 360],
+] as const;
+
+for (const [id, field, lo, hi] of NUMERIC_CONDITIONS) {
+  $<HTMLInputElement>(id).addEventListener('change', (e) => {
+    const v = Number((e.target as HTMLInputElement).value);
+    if (!Number.isFinite(v) || v < lo || v > hi) {
+      render();
+      return;
+    }
+    editCustom(() => {
+      scenario.conditions[field] = field === 'windFromDeg' ? ((v % 360) + 360) % 360 : v;
+    });
+  });
+}
+
+$<HTMLInputElement>('cond-inv').addEventListener('change', (e) => {
+  const on = (e.target as HTMLInputElement).checked;
+  editCustom(() => (scenario.conditions.inversion = on));
 });
+$<HTMLInputElement>('cond-soft').addEventListener('change', (e) => {
+  const on = (e.target as HTMLInputElement).checked;
+  editCustom(() => (scenario.conditions.groundSoft = on));
+});
+
+// Wind rose: grab it and put the tail where the wind comes from. The arrow then points the way
+// the air is travelling, which is the direction the sound gets carried.
+const rose = $('wind-rose');
+let roseDragging = false;
+function windFromPointer(e: PointerEvent) {
+  const box = rose.getBoundingClientRect();
+  const dx = e.clientX - (box.left + box.width / 2);
+  const dy = e.clientY - (box.top + box.height / 2);
+  if (Math.hypot(dx, dy) < 4) return;
+  const deg = (Math.atan2(dx, -dy) * 180) / Math.PI;
+  const snapped = (Math.round((((deg % 360) + 360) % 360) / 5) * 5) % 360;
+  editCustom(() => (scenario.conditions.windFromDeg = snapped));
+}
+rose.addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  roseDragging = true;
+  rose.setPointerCapture(e.pointerId);
+  windFromPointer(e);
+});
+rose.addEventListener('pointermove', (e) => {
+  if (roseDragging) windFromPointer(e);
+});
+for (const done of ['pointerup', 'pointercancel'] as const) {
+  rose.addEventListener(done, (e) => {
+    roseDragging = false;
+    rose.releasePointerCapture(e.pointerId);
+  });
+}
 $<HTMLInputElement>('terrain').addEventListener('change', (e) => {
   scenario.terrain.enabled = (e.target as HTMLInputElement).checked;
   zoneError = '';
@@ -439,8 +507,6 @@ function render() {
   $('aim-val').textContent = `${p.aimDeg}° ${compass(p.aimDeg)}`;
   $<HTMLInputElement>('directional').checked = p.directional;
   $<HTMLSelectElement>('subs').value = p.subs;
-  $<HTMLInputElement>('night').checked = s.conditions.inversion;
-  $<HTMLInputElement>('soft').checked = s.conditions.groundSoft;
   $<HTMLInputElement>('show-bass').checked = s.showBass;
   $<HTMLInputElement>('max').value = String(p.maxLevelAt10m);
   $<HTMLInputElement>('bass').value = String(p.bassExcess);
@@ -451,6 +517,20 @@ function render() {
   $<HTMLInputElement>('rcv-h').value = String(s.terrain.receiverHeightM);
   $<HTMLInputElement>('src-h').disabled = !s.terrain.enabled;
   $<HTMLInputElement>('rcv-h').disabled = !s.terrain.enabled;
+
+  // Conditions
+  const cond = s.conditions;
+  document.querySelectorAll<HTMLInputElement>('input[name="cond"]').forEach((r) => (r.checked = r.value === cond.preset));
+  $('cond-blurb').textContent = CONDITION_BLURBS[cond.preset];
+  $('cond-custom').hidden = cond.preset !== 'custom';
+  $<HTMLInputElement>('cond-temp').value = String(cond.temperatureC);
+  $<HTMLInputElement>('cond-rh').value = String(cond.humidityPct);
+  $<HTMLInputElement>('cond-wind').value = String(cond.windSpeedMs);
+  $<HTMLInputElement>('cond-dir').value = String(Math.round(cond.windFromDeg));
+  $('cond-dir-val').textContent = `${Math.round(cond.windFromDeg)}° ${compass(cond.windFromDeg)}`;
+  rose.hidden = cond.preset !== 'custom';
+  $('wind-arrow').style.transform = `rotate(${cond.windFromDeg + 180}deg)`;
+  $('wind-label').textContent = cond.windSpeedMs > 0 ? `${compass(cond.windFromDeg)} ${cond.windSpeedMs}` : 'calm';
 
   // Terrain. Receptors are fetched as they appear; the zone grid is only built on request and
   // is keyed by the stage position, so moving the stage drops back to flat contours.
@@ -492,16 +572,25 @@ function render() {
     li.textContent = `A‑weighted contours at ${RING_LEVELS.join(', ')} dB(A), in the direction the stacks face`;
     legend.appendChild(li);
   }
+  const outline = outlineCondition(cond);
+  const outlineLi = document.createElement('li');
+  outlineLi.className = 'line';
+  outlineLi.style.setProperty('--c', 'var(--zone-outline)');
+  outlineLi.textContent = `dashed: ${outline.label}, ${s.zoneMode === 'legal' ? s.limitDb : 60} dB(A)`;
+  legend.appendChild(outlineLi);
   $('legend-terrain').textContent = zoneTerrain ? 'zones include terrain' : 'zones assume flat ground';
 
   // KPIs
   const target = s.zoneMode === 'legal' ? s.limitDb : s.zoneMode === 'audibility' ? 45 : 60;
   $('k-reach-label').textContent = s.zoneMode === 'legal' ? `${s.limitDb} dB(A)` : s.zoneMode === 'audibility' ? '45 dB(A), clearly audible' : '60 dB(A)';
   if (s.stage) {
-    const front = shieldedReach(p, s.conditions, target, p.aimDeg, 'la', overlay.shieldingAt);
-    const back = shieldedReach(p, s.conditions, target, p.aimDeg + 180, 'la', overlay.shieldingAt);
-    $('k-reach').textContent = formatDistance(front);
-    $('k-reach-hint').textContent = p.directional ? `in front · ${formatDistance(back)} behind the stacks` : 'in every direction';
+    const front = shieldedReach(p, cond, target, p.aimDeg, 'la', overlay.shieldingAt);
+    const back = shieldedReach(p, cond, target, p.aimDeg + 180, 'la', overlay.shieldingAt);
+    const frontWorst = shieldedReach(p, WORST_CASE, target, p.aimDeg, 'la', overlay.shieldingAt);
+    $('k-reach').textContent = `${formatDistance(front)} / ${formatDistance(frontWorst)}`;
+    $('k-reach-hint').textContent = `${cond.preset} / worst · ${
+      p.directional ? `${formatDistance(back)} behind the stacks` : 'in every direction'
+    }`;
   } else {
     $('k-reach').textContent = '—';
     $('k-reach-hint').textContent = 'place the stage on the map';
@@ -510,31 +599,37 @@ function render() {
   // Receptor table + nearest
   const tb = $('rec-table').querySelector('tbody')!;
   tb.innerHTML = '';
-  let nearest: { name: string; d: number; la: number; lc: number } | null = null;
+  let nearest: { name: string; d: number; la: number; worst: number; lc: number } | null = null;
   if (s.stage) {
     const rows = s.receptors
       .map((r) => {
         const { distance, bearing } = distanceBearing(s.stage as LatLon, r);
-        const lv = levelAt(p, s.conditions, distance, bearing, overlay.receptors.get(r.id));
-        return { r, distance, bearing, lv };
+        // The same terrain shielding serves both conditions: a ridge does not care about weather.
+        const shielding = overlay.receptors.get(r.id);
+        const lv = levelAt(p, cond, distance, bearing, shielding);
+        const worst = levelAt(p, WORST_CASE, distance, bearing, shielding);
+        return { r, distance, bearing, lv, worst };
       })
       .sort((a, b) => a.distance - b.distance);
-    for (const { r, distance, bearing, lv } of rows) {
-      if (!nearest || distance < nearest.d) nearest = { name: r.name, d: distance, la: lv.la, lc: lv.lc };
-      const tone = s.zoneMode === 'legal' ? (lv.la >= s.limitDb ? 'critical' : lv.la >= s.limitDb - 5 ? 'warning' : 'fine') : lv.la >= 60 ? 'critical' : lv.la >= 45 ? 'warning' : 'fine';
+    for (const { r, distance, bearing, lv, worst } of rows) {
+      if (!nearest || distance < nearest.d) {
+        nearest = { name: r.name, d: distance, la: lv.la, worst: worst.la, lc: lv.lc };
+      }
+      // Colour by the worst case: that is the night the derogation has to hold on.
+      const tone = s.zoneMode === 'legal' ? (worst.la >= s.limitDb ? 'critical' : worst.la >= s.limitDb - 5 ? 'warning' : 'fine') : worst.la >= 60 ? 'critical' : worst.la >= 45 ? 'warning' : 'fine';
       const tr = document.createElement('tr');
       if (r.id === selectedReceptor) tr.className = 'selected';
-      tr.innerHTML = `<td><button class="link" data-focus="${r.id}" title="Show the profile and the marker"><span class="pill" style="background:var(--zone-${tone})"></span>${escapeHtml(r.name)}</button><div class="hint" style="margin:0">${compass(bearing)} · ${formatLatLon(r, 4)}</div></td><td class="num">${formatDistance(distance)}</td><td class="num">${lv.la.toFixed(0)}</td><td class="num">${lv.lc.toFixed(0)}</td><td class="num">${terrainCell(s, r.id)}</td><td><button class="btn small ghost" data-del="${r.id}" title="Remove">×</button></td>`;
+      tr.innerHTML = `<td><button class="link" data-focus="${r.id}" title="Show the profile and the marker"><span class="pill" style="background:var(--zone-${tone})"></span>${escapeHtml(r.name)}</button><div class="hint" style="margin:0">${compass(bearing)} · ${formatLatLon(r, 4)}</div></td><td class="num">${formatDistance(distance)}</td><td class="num">${lv.la.toFixed(0)}</td><td class="num muted">${worst.la.toFixed(0)}</td><td class="num">${lv.lc.toFixed(0)}</td><td class="num">${terrainCell(s, r.id)}</td><td><button class="btn small ghost" data-del="${r.id}" title="Remove">×</button></td>`;
       tb.appendChild(tr);
     }
   }
   if (!tb.children.length) {
-    tb.innerHTML = `<tr><td colspan="6" class="hint" style="margin:0">${s.stage ? 'Add the nearest houses, the village edge, the campsite reception.' : 'Place the stage first.'}</td></tr>`;
+    tb.innerHTML = `<tr><td colspan="7" class="hint" style="margin:0">${s.stage ? 'Add the nearest houses, the village edge, the campsite reception.' : 'Place the stage first.'}</td></tr>`;
   }
   renderProfile(s);
   if (nearest) {
-    $('k-near').textContent = `${nearest.la.toFixed(0)} dB(A)`;
-    $('k-near-hint').textContent = `${nearest.name}, ${formatDistance(nearest.d)} · bass ${nearest.lc.toFixed(0)} dB(C)`;
+    $('k-near').textContent = `${nearest.la.toFixed(0)} / ${nearest.worst.toFixed(0)}`;
+    $('k-near-hint').textContent = `${nearest.name}, ${formatDistance(nearest.d)} · dB(A) now / worst · bass ${nearest.lc.toFixed(0)} dB(C)`;
   } else {
     $('k-near').textContent = '—';
     $('k-near-hint').textContent = 'add a house';

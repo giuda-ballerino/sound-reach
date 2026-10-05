@@ -15,6 +15,7 @@
   --zone-faint: #6d8dd1;
   --zone-ring: #ffffff;
   --zone-bass: #c650b0;
+  --zone-outline: #ffffff;
   --sans: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   color-scheme: light;
@@ -157,3 +158,20 @@ tr.selected { background: var(--soft); }
   .mapwrap { position: absolute; inset: 0; }
 }
 @media (prefers-reduced-motion: reduce) { .side { transition: none; } }
+
+/* Conditions: four segments need to wrap on a narrow panel */
+.seg.seg-wrap { flex-wrap: wrap; }
+.seg.seg-wrap label { flex: 1 0 44%; }
+.seg.seg-wrap span { border-top: 1px solid transparent; }
+
+/* Wind rose: drag to set the direction the wind blows from */
+.wind-rose { position: absolute; top: 12px; right: 12px; z-index: 900; width: 58px; text-align: center; cursor: grab; touch-action: none; user-select: none; background: color-mix(in srgb, var(--panel) 82%, transparent); border: 1px solid var(--line); border-radius: 8px; padding: 4px 2px 2px; box-shadow: 0 1px 6px rgba(0,0,0,.25); }
+.wind-rose:active { cursor: grabbing; }
+.wind-rose svg { display: block; width: 40px; height: 40px; margin: 0 auto; }
+.wind-rose svg g { transform-origin: 24px 24px; }
+.wind-rose path { fill: var(--accent); }
+.wind-rose line { stroke: var(--accent); stroke-width: 3; stroke-linecap: round; }
+.wind-rose span { display: block; font: 500 11px var(--mono); color: var(--fg); }
+
+/* Receptor values: selected / worst */
+.pair .worst { color: var(--muted); }

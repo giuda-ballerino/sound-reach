@@ -128,11 +128,23 @@ export function bandPolygons(
   band: Band = 'la',
   shieldingAt: ShieldingAt = flatGround,
 ) {
-  return bands.map((zb) => {
-    const outer = contourRing(stage, p, c, zb.lower, band, shieldingAt);
-    const hole = Number.isFinite(zb.upper) ? contourRing(stage, p, c, zb.upper, band, shieldingAt) : null;
-    return { band: zb, outer, hole };
-  });
+  // Adjacent bands share a threshold — one band's hole is the next band's outer ring — so
+  // tracing by level rather than by band saves about half the work. Rings are read, never
+  // mutated, so sharing the arrays is safe.
+  const traced = new Map<number, LatLon[]>();
+  const ring = (db: number): LatLon[] => {
+    let r = traced.get(db);
+    if (!r) {
+      r = contourRing(stage, p, c, db, band, shieldingAt);
+      traced.set(db, r);
+    }
+    return r;
+  };
+  return bands.map((zb) => ({
+    band: zb,
+    outer: ring(zb.lower),
+    hole: Number.isFinite(zb.upper) ? ring(zb.upper) : null,
+  }));
 }
 
 /** Largest reach among the rings drawn, used to fit the map. */

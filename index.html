@@ -70,11 +70,35 @@
           </div>
           <div class="tablewrap">
             <table id="rec-table">
-              <thead><tr><th>Name</th><th class="num">Dist.</th><th class="num">dB(A)</th><th class="num">Bass</th><th class="num">Terrain</th><th></th></tr></thead>
+              <thead><tr><th>Name</th><th class="num">Dist.</th><th class="num">dB(A)</th><th class="num" title="Under the worst (ISO) condition">worst</th><th class="num">Bass</th><th class="num">Terrain</th><th></th></tr></thead>
               <tbody></tbody>
             </table>
           </div>
           <div id="rec-profile" class="profile" hidden></div>
+        </section>
+
+        <section class="block">
+          <h2>Conditions</h2>
+          <div class="seg seg-wrap" role="radiogroup" aria-label="Weather conditions">
+            <label><input type="radio" name="cond" value="typical" /><span>Typical</span></label>
+            <label><input type="radio" name="cond" value="worst" /><span>Worst (ISO)</span></label>
+            <label><input type="radio" name="cond" value="favourable" /><span>Favourable</span></label>
+            <label><input type="radio" name="cond" value="custom" /><span>Custom</span></label>
+          </div>
+          <div class="hint" id="cond-blurb"></div>
+          <div id="cond-custom" hidden>
+            <div class="row">
+              <div class="field"><label for="cond-temp">Temperature, °C</label><input type="number" id="cond-temp" step="1" min="-40" max="60" /></div>
+              <div class="field"><label for="cond-rh">Humidity, %</label><input type="number" id="cond-rh" step="5" min="1" max="100" /></div>
+            </div>
+            <div class="row">
+              <div class="field"><label for="cond-wind">Wind, m/s</label><input type="number" id="cond-wind" step="0.5" min="0" max="40" /></div>
+              <div class="field"><label for="cond-dir">Wind from <span class="val" id="cond-dir-val"></span></label><input type="number" id="cond-dir" step="5" min="0" max="359" /></div>
+            </div>
+            <label class="toggle"><input type="checkbox" id="cond-inv" /> Temperature inversion (still night air, +5 dB far away)</label>
+            <label class="toggle"><input type="checkbox" id="cond-soft" /> Soft ground between stage and houses (−2 dB beyond 200 m)</label>
+            <div class="hint">Drag the arrow on the map to set the wind direction.</div>
+          </div>
         </section>
 
         <details class="block" id="adjust">
@@ -88,9 +112,7 @@
             <label for="subs">Sub arrangement</label>
             <select id="subs"><option value="omni">Omni (stacks left/right)</option><option value="cardioid">Cardioid (−10 dB behind)</option></select>
           </div>
-          <label class="toggle"><input type="checkbox" id="night" /> Still night / downwind / inversion (+5 dB far away)</label>
           <label class="toggle"><input type="checkbox" id="show-bass" /> Show the bass contour (bass carries for kilometres)</label>
-          <label class="toggle"><input type="checkbox" id="soft" /> Soft ground between stage and houses (−2 dB beyond 200 m)</label>
           <label class="toggle"><input type="checkbox" id="terrain" /> Terrain shielding from the real elevation profile</label>
           <div class="row" id="terrain-heights">
             <div class="field"><label for="src-h">Stacks above ground, m</label><input type="number" id="src-h" min="0" max="100" step="0.5" /></div>
@@ -131,11 +153,15 @@
         </section>
 
         <footer class="block foot">
-          <p>Model: −6 dB per doubling of distance from 10 m, air absorption, soft‑ground and night terms, horn directivity, and single‑edge terrain diffraction from the Copernicus DEM. Not modelled: buildings, walls, vegetation, water reflections, multiple ridges. A deroga needs a <em>tecnico competente in acustica</em>.</p>
+          <p>Model: −6 dB per doubling of distance from 10 m, ISO 9613‑1 air absorption for the chosen temperature and humidity, soft‑ground and wind/inversion refraction terms, horn directivity, and single‑edge terrain diffraction. Not modelled: buildings, walls, vegetation, water reflections, multiple ridges. “Worst (ISO)” is a permit convention, not a forecast. A deroga needs a <em>tecnico competente in acustica</em>.</p>
         </footer>
       </aside>
       <main class="mapwrap">
         <div id="map" class="map" role="application" aria-label="Map"></div>
+        <div id="wind-rose" class="wind-rose" hidden title="Drag to set the direction the wind blows from">
+          <svg viewBox="0 0 48 48" aria-hidden="true"><g id="wind-arrow"><path d="M24 6 L30 22 L24 19 L18 22 Z" /><line x1="24" y1="19" x2="24" y2="40" /></g></svg>
+          <span id="wind-label"></span>
+        </div>
         <button id="side-toggle" class="side-toggle" aria-expanded="true" aria-controls="side">Controls</button>
         <div id="pick-banner" class="pick-banner" hidden></div>
       </main>
