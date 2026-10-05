@@ -3,7 +3,7 @@ import { DEFAULT_RIG, levelAt, reachDistance } from './acoustics';
 import { distanceBearing } from './geo';
 import { newScenario, sanitize } from './state';
 import { gridShielding, ZONE_BEARING_STEP_DEG, ZONE_STEP_M } from './terrainService';
-import { contourRing, flatGround, maxReach, shieldedReach, type ShieldingAt } from './zones';
+import { REACH_STEP_M, contourRing, flatGround, maxReach, shieldedReach, type ShieldingAt } from './zones';
 
 const rig = { ...DEFAULT_RIG, night: false, softGround: false, directional: false };
 const stage = { lat: 38.1058, lon: 12.723 };
@@ -22,11 +22,66 @@ describe('levelAt with shielding', () => {
 });
 
 describe('shieldedReach', () => {
-  it('matches the unshielded reach over flat ground', () => {
-    for (const b of [0, 37, 180, 300]) {
-      expect(shieldedReach(rig, 60, b)).toBe(reachDistance(rig, 60, b));
-      expect(shieldedReach(rig, 60, b, 'la', () => ({ la: 0, lc: 0 }))).toBeCloseTo(reachDistance(rig, 60, b), 6);
+  it('marches in the same steps the zone grid is sampled at', () => {
+    // A coarser march could stride over a ridge the shielding data can actually resolve.
+    expect(REACH_STEP_M).toBe(ZONE_STEP_M);
+  });
+
+  it('matches the unshielded reach over flat ground, to within 0.1 m', () => {
+    // Flat ground is monotonic, so march-then-bisect must land on the same root as the plain
+    // bisection in acoustics.reachDistance.
+    const directional = { ...DEFAULT_RIG };
+    for (const [params, target] of [
+      [rig, 60],
+      [rig, 45],
+      [rig, 80],
+      [directional, 60],
+      [directional, 35],
+    ] as const) {
+      for (const b of [0, 37, 90, 180, 300, undefined]) {
+        const marched = shieldedReach(params, target, b);
+        const bisected = reachDistance(params, target, b);
+        expect(Math.abs(marched - bisected)).toBeLessThan(0.1);
+      }
     }
+  });
+
+  it('is unchanged by a callback that shields nothing', () => {
+    for (const b of [0, 37, 180, 300]) {
+      const zeros = shieldedReach(rig, 60, b, 'la', () => ({ la: 0, lc: 0 }));
+      expect(Math.abs(zeros - reachDistance(rig, 60, b))).toBeLessThan(0.1);
+    }
+  });
+
+  it('clamps to maxDistance when the target is never reached', () => {
+    expect(shieldedReach(rig, 5, 0, 'la', flatGround, 2000)).toBe(2000);
+  });
+
+  it('returns the reference distance when the target is already met at the source', () => {
+    expect(shieldedReach(rig, 200, 0)).toBe(10);
+  });
+
+  it('returns the FIRST crossing when terrain makes the level non-monotonic', () => {
+    // A band of heavy shielding from 300 to 500 m: the level dives below the target at 300 m,
+    // then climbs back above it past 500 m and only falls again around 960 m. A bisection over
+    // the whole range converges on that last crossing and draws the contour three times too
+    // far out; the march has to stop at 300.
+    const RIDGE_FROM = 300;
+    const RIDGE_TO = 500;
+    const bumpy: ShieldingAt = (_b, d) =>
+      d >= RIDGE_FROM && d <= RIDGE_TO ? { la: 20, lc: 8 } : { la: 0, lc: 0 };
+    const target = 60;
+    const at = (d: number) => levelAt(rig, d, 0, bumpy(0, d)).la;
+
+    // The shape the test depends on: above, below, above again, then finally below.
+    expect(at(RIDGE_FROM - 1)).toBeGreaterThan(target);
+    expect(at(RIDGE_FROM)).toBeLessThan(target);
+    expect(at(RIDGE_TO + 100)).toBeGreaterThan(target);
+    expect(at(1200)).toBeLessThan(target);
+
+    expect(shieldedReach(rig, target, 0, 'la', bumpy)).toBeCloseTo(RIDGE_FROM, 1);
+    // And the later crossing really is out where a whole-range bisection would have landed.
+    expect(shieldedReach(rig, target, 0)).toBeGreaterThan(900);
   });
 
   it('pulls the contour in behind a ridge', () => {

@@ -1,4 +1,4 @@
-import { REF_DISTANCE, levelAt, reachDistance, type Band, type Levels, type RigParams } from './acoustics';
+import { REF_DISTANCE, levelAt, type Band, type Levels, type RigParams } from './acoustics';
 import { destination, type LatLon } from './geo';
 import { NO_SHIELDING } from './terrain';
 
@@ -44,11 +44,27 @@ export const RING_LEVELS = [90, 80, 70, 60, 50, 45];
 const STEP_DEG = 3;
 
 /**
- * Distance along a bearing at which the level falls to `targetDb`, with terrain in the way.
+ * Step used to hunt for the contour. Matches the zone grid's own spacing (`ZONE_STEP_M`), so
+ * the march cannot stride over a ridge the shielding data can actually resolve.
+ */
+export const REACH_STEP_M = 50;
+
+/** Halvings inside the bracketing step; 40 puts the answer far below a millimetre. */
+const BISECT_STEPS = 40;
+
+/**
+ * Distance along a bearing at which the level first falls to `targetDb`, terrain included.
  *
- * This mirrors `acoustics.reachDistance`, which cannot take the terrain term itself: shielding
- * depends on the distance the bisection is still searching for. With `flatGround` the two agree
- * exactly, since subtracting zero changes nothing.
+ * `acoustics.reachDistance` cannot take the terrain term itself, because shielding depends on
+ * the very distance being searched for. It also assumes the level only ever falls, which stops
+ * being true once terrain is in play: the level collapses behind a ridge and recovers on the
+ * far side, so there can be several crossings. A bisection over the whole range would happily
+ * converge on a later one and draw the contour kilometres past the point where the level
+ * genuinely first drops below the limit — the optimistic direction, and the wrong one.
+ *
+ * So march outwards in fixed steps, stop at the first step that crosses, and bisect inside it.
+ * With `flatGround` the level is monotonic and this agrees with `reachDistance` to well under
+ * a millimetre.
  */
 export function shieldedReach(
   p: RigParams,
@@ -58,18 +74,30 @@ export function shieldedReach(
   shieldingAt: ShieldingAt = flatGround,
   maxDistance = 50_000,
 ): number {
-  if (shieldingAt === flatGround) return reachDistance(p, targetDb, bearingDeg, band, maxDistance);
-  const f = (d: number) => levelAt(p, d, bearingDeg, shieldingAt(bearingDeg ?? p.aimDeg, d))[band] - targetDb;
+  // Shielding is indexed by bearing, so an on-axis query still has to name one.
+  const lookupBearing = bearingDeg ?? p.aimDeg;
+  const f = (d: number) => levelAt(p, d, bearingDeg, shieldingAt(lookupBearing, d))[band] - targetDb;
+
   let lo = REF_DISTANCE;
-  let hi = maxDistance;
   if (f(lo) <= 0) return lo;
-  if (f(hi) > 0) return hi;
-  for (let i = 0; i < 60; i++) {
-    const mid = Math.sqrt(lo * hi);
+
+  let hi = maxDistance;
+  for (let d = lo + REACH_STEP_M; ; d += REACH_STEP_M) {
+    const at = Math.min(d, maxDistance);
+    if (f(at) <= 0) {
+      hi = at;
+      break;
+    }
+    if (at >= maxDistance) return maxDistance;
+    lo = at;
+  }
+
+  for (let i = 0; i < BISECT_STEPS; i++) {
+    const mid = (lo + hi) / 2;
     if (f(mid) > 0) lo = mid;
     else hi = mid;
   }
-  return Math.sqrt(lo * hi);
+  return (lo + hi) / 2;
 }
 
 /** Trace the closed ring where the level equals `db`, as lat/lon points around the stage. */
