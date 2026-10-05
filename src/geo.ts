@@ -60,3 +60,8 @@ export function formatDistance(m: number): string {
   if (m >= 1000) return `${(m / 1000).toFixed(1)} km`;
   return `${Math.round(m)} m`;
 }
+
+/** Smallest angle between two bearings, 0..180. */
+export function angleBetweenBearings(a: number, b: number): number {
+  return Math.abs(((((a - b) % 360) + 540) % 360) - 180);
+}

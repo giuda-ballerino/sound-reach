@@ -1,6 +1,8 @@
 import { DEFAULT_RIG, type RigParams } from './acoustics';
+import { CONDITION_PRESETS, defaultConditions, type ConditionPreset, type Conditions } from './conditions';
 import type { LatLon } from './geo';
 import { DEFAULT_RECEIVER_HEIGHT_M, DEFAULT_SOURCE_HEIGHT_M } from './terrain';
+import type { OmnidirectionalWind } from './wind';
 import type { ZoneMode } from './zones';
 
 export interface Receptor extends LatLon {
@@ -23,8 +25,11 @@ export const DEFAULT_TERRAIN: TerrainSettings = {
   receiverHeightM: DEFAULT_RECEIVER_HEIGHT_M,
 };
 
+/** Bumped to 2 when weather conditions moved out of the rig. */
+export const SCENARIO_VERSION = 2;
+
 export interface Scenario {
-  version: 1;
+  version: typeof SCENARIO_VERSION;
   name: string;
   stage: LatLon | null;
   rig: RigParams;
@@ -37,6 +42,7 @@ export interface Scenario {
   /** Draw the dashed bass contour. Off by default: bass carries for kilometres and swamps the map. */
   showBass: boolean;
   terrain: TerrainSettings;
+  conditions: Conditions;
 }
 
 export const LIMITS: { value: number; label: string }[] = [
@@ -50,7 +56,7 @@ export const LIMITS: { value: number; label: string }[] = [
 
 export function newScenario(): Scenario {
   return {
-    version: 1,
+    version: SCENARIO_VERSION,
     name: '',
     stage: null,
     rig: { ...DEFAULT_RIG },
@@ -60,6 +66,7 @@ export function newScenario(): Scenario {
     layer: 'satellite',
     showBass: false,
     terrain: { ...DEFAULT_TERRAIN },
+    conditions: defaultConditions(),
   };
 }
 
@@ -124,8 +131,6 @@ export function sanitize(input: unknown): Scenario | null {
     aimDeg: num(rigIn.aimDeg, base.rig.aimDeg),
     directional: typeof rigIn.directional === 'boolean' ? rigIn.directional : base.rig.directional,
     subs: rigIn.subs === 'cardioid' ? 'cardioid' : 'omni',
-    night: typeof rigIn.night === 'boolean' ? rigIn.night : base.rig.night,
-    softGround: typeof rigIn.softGround === 'boolean' ? rigIn.softGround : base.rig.softGround,
   };
   const stageIn = o.stage as Record<string, unknown> | null | undefined;
   const stage =
@@ -155,7 +160,7 @@ export function sanitize(input: unknown): Scenario | null {
     receiverHeightM: height(terrainIn.receiverHeightM, DEFAULT_TERRAIN.receiverHeightM),
   };
   return {
-    version: 1,
+    version: SCENARIO_VERSION,
     name: typeof o.name === 'string' ? o.name : '',
     stage,
     rig,
@@ -165,5 +170,54 @@ export function sanitize(input: unknown): Scenario | null {
     layer: o.layer === 'streets' ? 'streets' : 'satellite',
     showBass: o.showBass === true,
     terrain,
+    conditions: readConditions(o, rigIn),
+  };
+}
+
+const PRESETS: ConditionPreset[] = ['typical', 'worst', 'favourable', 'custom'];
+
+/**
+ * Read the conditions block, migrating version 1 files on the way.
+ *
+ * Before version 2 the weather lived on the rig as two booleans. Those carry over as-is rather
+ * than being thrown away, which means a migrated file can hold values that do not match any
+ * preset — an old scenario with `night: true` is not a typical night. When that happens the
+ * preset reads 'custom', so the control and the numbers agree instead of the panel claiming
+ * 'Typical' over an inversion.
+ */
+function readConditions(o: Record<string, unknown>, rigIn: Record<string, unknown>): Conditions {
+  const fallbackInversion = typeof rigIn.night === 'boolean' ? rigIn.night : CONDITION_PRESETS.typical.inversion;
+  const fallbackGround = typeof rigIn.softGround === 'boolean' ? rigIn.softGround : CONDITION_PRESETS.typical.groundSoft;
+  const legacy: Conditions = {
+    ...CONDITION_PRESETS.typical,
+    inversion: fallbackInversion,
+    groundSoft: fallbackGround,
+  };
+  const typical = CONDITION_PRESETS.typical;
+  if (!o.conditions || typeof o.conditions !== 'object') {
+    const matchesTypical = legacy.inversion === typical.inversion && legacy.groundSoft === typical.groundSoft;
+    return { ...legacy, preset: matchesTypical ? 'typical' : 'custom' };
+  }
+
+  const c = o.conditions as Record<string, unknown>;
+  const n = (v: unknown, d: number, lo: number, hi: number) =>
+    typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi ? v : d;
+  const preset = PRESETS.includes(c.preset as ConditionPreset) ? (c.preset as ConditionPreset) : 'custom';
+  // A named preset is defined by its own values, not by whatever was serialised next to it.
+  if (preset !== 'custom') return { ...CONDITION_PRESETS[preset] };
+
+  const wind = c.omnidirectionalWind;
+  return {
+    preset: 'custom',
+    temperatureC: n(c.temperatureC, typical.temperatureC, -40, 60),
+    humidityPct: n(c.humidityPct, typical.humidityPct, 1, 100),
+    windSpeedMs: n(c.windSpeedMs, typical.windSpeedMs, 0, 50),
+    // A bearing is modular, so wrap anything finite rather than rejecting 450° as out of range.
+    windFromDeg: typeof c.windFromDeg === 'number' && Number.isFinite(c.windFromDeg)
+      ? ((c.windFromDeg % 360) + 360) % 360
+      : 0,
+    inversion: typeof c.inversion === 'boolean' ? c.inversion : legacy.inversion,
+    groundSoft: typeof c.groundSoft === 'boolean' ? c.groundSoft : legacy.groundSoft,
+    ...(wind === 'downwind' || wind === 'upwind' ? { omnidirectionalWind: wind as OmnidirectionalWind } : {}),
   };
 }

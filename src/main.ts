@@ -135,7 +135,7 @@ $<HTMLSelectElement>('subs').addEventListener('change', (e) => {
   render();
 });
 $<HTMLInputElement>('night').addEventListener('change', (e) => {
-  scenario.rig.night = (e.target as HTMLInputElement).checked;
+  scenario.conditions.inversion = (e.target as HTMLInputElement).checked;
   render();
 });
 $<HTMLInputElement>('show-bass').addEventListener('change', (e) => {
@@ -143,7 +143,7 @@ $<HTMLInputElement>('show-bass').addEventListener('change', (e) => {
   render();
 });
 $<HTMLInputElement>('soft').addEventListener('change', (e) => {
-  scenario.rig.softGround = (e.target as HTMLInputElement).checked;
+  scenario.conditions.groundSoft = (e.target as HTMLInputElement).checked;
   render();
 });
 $<HTMLInputElement>('terrain').addEventListener('change', (e) => {
@@ -439,8 +439,8 @@ function render() {
   $('aim-val').textContent = `${p.aimDeg}° ${compass(p.aimDeg)}`;
   $<HTMLInputElement>('directional').checked = p.directional;
   $<HTMLSelectElement>('subs').value = p.subs;
-  $<HTMLInputElement>('night').checked = p.night;
-  $<HTMLInputElement>('soft').checked = p.softGround;
+  $<HTMLInputElement>('night').checked = s.conditions.inversion;
+  $<HTMLInputElement>('soft').checked = s.conditions.groundSoft;
   $<HTMLInputElement>('show-bass').checked = s.showBass;
   $<HTMLInputElement>('max').value = String(p.maxLevelAt10m);
   $<HTMLInputElement>('bass').value = String(p.bassExcess);
@@ -498,8 +498,8 @@ function render() {
   const target = s.zoneMode === 'legal' ? s.limitDb : s.zoneMode === 'audibility' ? 45 : 60;
   $('k-reach-label').textContent = s.zoneMode === 'legal' ? `${s.limitDb} dB(A)` : s.zoneMode === 'audibility' ? '45 dB(A), clearly audible' : '60 dB(A)';
   if (s.stage) {
-    const front = shieldedReach(p, target, p.aimDeg, 'la', overlay.shieldingAt);
-    const back = shieldedReach(p, target, p.aimDeg + 180, 'la', overlay.shieldingAt);
+    const front = shieldedReach(p, s.conditions, target, p.aimDeg, 'la', overlay.shieldingAt);
+    const back = shieldedReach(p, s.conditions, target, p.aimDeg + 180, 'la', overlay.shieldingAt);
     $('k-reach').textContent = formatDistance(front);
     $('k-reach-hint').textContent = p.directional ? `in front · ${formatDistance(back)} behind the stacks` : 'in every direction';
   } else {
@@ -515,7 +515,7 @@ function render() {
     const rows = s.receptors
       .map((r) => {
         const { distance, bearing } = distanceBearing(s.stage as LatLon, r);
-        const lv = levelAt(p, distance, bearing, overlay.receptors.get(r.id));
+        const lv = levelAt(p, s.conditions, distance, bearing, overlay.receptors.get(r.id));
         return { r, distance, bearing, lv };
       })
       .sort((a, b) => a.distance - b.distance);

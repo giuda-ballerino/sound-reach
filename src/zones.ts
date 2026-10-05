@@ -1,4 +1,5 @@
 import { REF_DISTANCE, levelAt, type Band, type Levels, type RigParams } from './acoustics';
+import type { Conditions } from './conditions';
 import { destination, type LatLon } from './geo';
 import { NO_SHIELDING } from './terrain';
 
@@ -68,6 +69,7 @@ const BISECT_STEPS = 40;
  */
 export function shieldedReach(
   p: RigParams,
+  c: Conditions,
   targetDb: number,
   bearingDeg: number | undefined,
   band: Band = 'la',
@@ -76,7 +78,7 @@ export function shieldedReach(
 ): number {
   // Shielding is indexed by bearing, so an on-axis query still has to name one.
   const lookupBearing = bearingDeg ?? p.aimDeg;
-  const f = (d: number) => levelAt(p, d, bearingDeg, shieldingAt(lookupBearing, d))[band] - targetDb;
+  const f = (d: number) => levelAt(p, c, d, bearingDeg, shieldingAt(lookupBearing, d))[band] - targetDb;
 
   let lo = REF_DISTANCE;
   if (f(lo) <= 0) return lo;
@@ -104,13 +106,14 @@ export function shieldedReach(
 export function contourRing(
   stage: LatLon,
   p: RigParams,
+  c: Conditions,
   db: number,
   band: Band = 'la',
   shieldingAt: ShieldingAt = flatGround,
 ): LatLon[] {
   const ring: LatLon[] = [];
   for (let b = 0; b < 360; b += STEP_DEG) {
-    const d = shieldedReach(p, db, b, band, shieldingAt);
+    const d = shieldedReach(p, c, db, b, band, shieldingAt);
     ring.push(destination(stage, b, d));
   }
   return ring;
@@ -120,13 +123,14 @@ export function contourRing(
 export function bandPolygons(
   stage: LatLon,
   p: RigParams,
+  c: Conditions,
   bands: ZoneBand[],
   band: Band = 'la',
   shieldingAt: ShieldingAt = flatGround,
 ) {
   return bands.map((zb) => {
-    const outer = contourRing(stage, p, zb.lower, band, shieldingAt);
-    const hole = Number.isFinite(zb.upper) ? contourRing(stage, p, zb.upper, band, shieldingAt) : null;
+    const outer = contourRing(stage, p, c, zb.lower, band, shieldingAt);
+    const hole = Number.isFinite(zb.upper) ? contourRing(stage, p, c, zb.upper, band, shieldingAt) : null;
     return { band: zb, outer, hole };
   });
 }
@@ -134,13 +138,14 @@ export function bandPolygons(
 /** Largest reach among the rings drawn, used to fit the map. */
 export function maxReach(
   p: RigParams,
+  c: Conditions,
   levels: number[],
   band: Band = 'la',
   shieldingAt: ShieldingAt = flatGround,
 ): number {
   let max = 0;
   const lowest = Math.min(...levels);
-  for (let b = 0; b < 360; b += 15) max = Math.max(max, shieldedReach(p, lowest, b, band, shieldingAt));
+  for (let b = 0; b < 360; b += 15) max = Math.max(max, shieldedReach(p, c, lowest, b, band, shieldingAt));
   return max;
 }
 

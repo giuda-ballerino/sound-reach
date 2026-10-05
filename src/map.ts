@@ -116,18 +116,19 @@ export class SoundMap {
     const stage = s.stage;
     const p = s.rig;
     const shieldingAt = terrain.shieldingAt;
+    const c = s.conditions;
 
     // Zones
     if (s.zoneMode === 'rings') {
       for (const lvl of RING_LEVELS) {
-        const ring = contourRing(stage, p, lvl, 'la', shieldingAt);
+        const ring = contourRing(stage, p, c, lvl, 'la', shieldingAt);
         const poly = L.polygon(ring.map(toLL), {
           color: toneColor('ring'),
           weight: lvl === 60 ? 2.5 : 1.5,
           fill: false,
           dashArray: lvl <= 50 ? '6 5' : undefined,
         }).addTo(this.rings);
-        const tip = destination(stage, p.aimDeg, shieldedReach(p, lvl, p.aimDeg, 'la', shieldingAt));
+        const tip = destination(stage, p.aimDeg, shieldedReach(p, c, lvl, p.aimDeg, 'la', shieldingAt));
         L.marker(toLL(tip), {
           icon: L.divIcon({ className: 'ring-label', html: `${lvl} dB(A)`, iconSize: undefined }),
           interactive: false,
@@ -136,7 +137,7 @@ export class SoundMap {
       }
     } else {
       const bands = s.zoneMode === 'legal' ? legalBands(s.limitDb) : AUDIBILITY_BANDS;
-      for (const { band, outer, hole } of bandPolygons(stage, p, bands, 'la', shieldingAt)) {
+      for (const { band, outer, hole } of bandPolygons(stage, p, c, bands, 'la', shieldingAt)) {
         const rings: L.LatLngExpression[][] = hole ? [outer.map(toLL), hole.map(toLL)] : [outer.map(toLL)];
         L.polygon(rings, {
           color: toneColor(band.tone),
@@ -152,7 +153,7 @@ export class SoundMap {
       if (s.showBass) {
         const innermost = Math.max(...bands.map((b) => b.lower));
         const bassDb = innermost + 15;
-        L.polygon(contourRing(stage, p, bassDb, 'lc', shieldingAt).map(toLL), {
+        L.polygon(contourRing(stage, p, c, bassDb, 'lc', shieldingAt).map(toLL), {
           color: toneColor('bass'),
           weight: 1.5,
           dashArray: '6 5',
@@ -177,7 +178,7 @@ export class SoundMap {
     }
 
     // Aim handle: a draggable point 25% of the way to the limit contour, in the aim direction
-    const aimDist = Math.max(60, shieldedReach(p, s.zoneMode === 'legal' ? s.limitDb : 60, p.aimDeg, 'la', shieldingAt) * 0.25);
+    const aimDist = Math.max(60, shieldedReach(p, c, s.zoneMode === 'legal' ? s.limitDb : 60, p.aimDeg, 'la', shieldingAt) * 0.25);
     const aimPoint = destination(stage, p.aimDeg, aimDist);
     if (!this.aimHandle) {
       this.aimHandle = L.marker(toLL(aimPoint), {
@@ -216,8 +217,8 @@ export class SoundMap {
     for (const r of s.receptors) {
       const { distance, bearing } = distanceBearing(stage, r);
       const shielding = terrain.receptors.get(r.id) ?? NO_SHIELDING;
-      const lv = levelAt(p, distance, bearing, shielding);
-      const flat = levelAt(p, distance, bearing);
+      const lv = levelAt(p, c, distance, bearing, shielding);
+      const flat = levelAt(p, c, distance, bearing);
       const limit = s.limitDb;
       const tone = s.zoneMode === 'legal' ? (lv.la >= limit ? 'critical' : lv.la >= limit - 5 ? 'warning' : 'fine') : lv.la >= 60 ? 'critical' : lv.la >= 45 ? 'warning' : 'fine';
       const m = L.marker(toLL(r), {
@@ -247,7 +248,7 @@ export class SoundMap {
   fitScenario(s: Scenario, terrain: TerrainOverlay = FLAT) {
     if (!s.stage) return;
     const levels = s.zoneMode === 'legal' ? [s.limitDb - 10] : s.zoneMode === 'audibility' ? [35] : [45];
-    this.fitTo(s.stage, maxReach(s.rig, levels, 'la', terrain.shieldingAt), s.receptors);
+    this.fitTo(s.stage, maxReach(s.rig, s.conditions, levels, 'la', terrain.shieldingAt), s.receptors);
   }
 
   focusReceptor(id: string) {
