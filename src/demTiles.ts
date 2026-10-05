@@ -93,6 +93,13 @@ export class TerrainTileService implements ElevationSource {
   private readonly endpoint: string;
   private readonly maxTiles: number;
   private readonly retryDelayMs: number;
+  /**
+   * Whether any tile has been fetched and decoded this session. Until it has, a 403/404 is
+   * treated as the host being unreachable rather than as empty ocean. Tiles load concurrently,
+   * so a first batch that mixes a real tile with a genuinely absent one can still throw if the
+   * absent one lands first; the fallback covers that and the next request sorts it out.
+   */
+  private hasLoadedAny = false;
   readonly zoom: number;
 
   constructor(options: TerrainTileOptions = {}) {
@@ -188,7 +195,15 @@ export class TerrainTileService implements ElevationSource {
   private async loadTile(key: string): Promise<void> {
     const bytes = await this.request(`${this.endpoint}/${key}.png`);
     if (bytes === null) {
-      // Nothing published for this tile: open sea, as far as the mosaic is concerned.
+      // A 403/404 means "the mosaic publishes no tile here" — open sea — but only once we have
+      // seen the host actually serve one. Before that it reads the same as a dead endpoint, a
+      // moved bucket or a blocked request, and quietly answering sea level would hide a total
+      // outage behind plausible flat terrain. Throwing instead lets TieredElevation fall back.
+      if (!this.hasLoadedAny) {
+        throw new TerrainTileError(
+          `tile ${key} was not found and no tile has loaded yet, so the tile host looks unreachable`,
+        );
+      }
       this.tiles.set(key, new Float32Array(TILE_SIZE * TILE_SIZE));
       return;
     }
@@ -202,6 +217,7 @@ export class TerrainTileService implements ElevationSource {
       throw new TerrainTileError(`tile ${key} was ${png.width}×${png.height}, expected ${TILE_SIZE}²`);
     }
     this.tiles.set(key, decodeTerrarium(png));
+    this.hasLoadedAny = true;
   }
 
   /** Tile bytes, or null when the server says there is no such tile. */

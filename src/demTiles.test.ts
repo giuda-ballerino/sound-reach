@@ -148,9 +148,34 @@ describe('TerrainTileService', () => {
     expect(svc.cached([stage])).toEqual([7]);
   });
 
-  it('treats a tile the mosaic does not publish as sea level', async () => {
-    const svc = service(server(() => 100, () => new Response('nope', { status: 404 })));
-    expect(await svc.elevations([stage])).toEqual([0]);
+  it('treats a tile the mosaic does not publish as sea level, once the host has proved itself', async () => {
+    // Somewhere the mosaic has a tile, so the host is known good...
+    const stub = server(() => 100, (key) => (key.startsWith('12/2192/') ? null : new Response('nope', { status: 404 })));
+    const svc = service(stub);
+    expect(await svc.elevations([stage])).toEqual([100]);
+    // ...and only then does a missing tile elsewhere read as open sea.
+    expect(await svc.elevations([{ lat: 45, lon: 9 }])).toEqual([0]);
+  });
+
+  it('refuses to call a 404 sea level before any tile has loaded', async () => {
+    // An unreachable or moved bucket answers 404 for everything. Flat terrain everywhere is a
+    // plausible-looking lie, so this has to fail and let the fallback source take over.
+    const stub = server(() => 100, () => new Response('nope', { status: 404 }));
+    await expect(service(stub).elevations([stage])).rejects.toBeInstanceOf(TerrainTileError);
+    await expect(service(stub).elevations([stage])).rejects.toThrow(/no tile has loaded yet/);
+  });
+
+  it('refuses to call a 403 sea level before any tile has loaded', async () => {
+    const stub = server(() => 100, () => new Response('denied', { status: 403 }));
+    await expect(service(stub).elevations([stage])).rejects.toBeInstanceOf(TerrainTileError);
+  });
+
+  it('keeps answering sea level for later gaps once a tile has loaded', async () => {
+    const stub = server(() => 42, (key) => (key.startsWith('12/2192/') ? null : new Response('', { status: 403 })));
+    const svc = service(stub);
+    await svc.elevations([stage]);
+    expect(await svc.elevations([{ lat: 45, lon: 9 }])).toEqual([0]);
+    expect(await svc.elevations([{ lat: 50, lon: 2 }])).toEqual([0]);
   });
 
   it('retries once on 429 and then succeeds', async () => {
@@ -172,6 +197,7 @@ describe('TerrainTileService', () => {
 
   it('drops the oldest tiles past the cap', async () => {
     const stub = server(() => 9);
+    // Every tile here returns 200, so the not-yet-proven-host guard never fires.
     const svc = service(stub, { maxTiles: 2 });
     // Three well-separated places, so three different tiles.
     const spread = [stage, { lat: 45, lon: 9 }, { lat: 50, lon: 2 }];
