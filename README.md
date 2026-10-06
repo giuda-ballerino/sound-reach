@@ -89,7 +89,18 @@ Absorption is strongly frequency-dependent and music is not a pure tone, so the 
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | +10 | +7 | +4 | +1 | 0 | 0 | 0 | −4 |
 
-That spectrum is A-weighted, propagated to 500 m, and the resulting dB(A) loss is divided by 4.9 to give an effective dB per 100 m. At 20 °C / 70 % it comes out at **0.798 dB per 100 m**, which is the 0.8 the model used as a hard-coded constant before any of this existed — so old scenarios keep their answers. Across the presets it ranges from 0.74 (15 °C / 90 %) to 0.90 (25 °C / 35 %). The bass figure is simply the 63 Hz coefficient, around 0.01 dB per 100 m: air does essentially nothing to a kick drum, which is why bass is what carries to the next village.
+**Absorption is computed per band at every distance, not as a rate.** Each band is attenuated by its own coefficient and the A-weighted total is re-summed at the distance in question, because the mix that arrives at 2 km is not the mix that left the stacks. The 4 and 8 kHz bands die first, and once they are gone there is nothing left for the air to take, so the A-weighted loss flattens off instead of growing linearly:
+
+| | 100 m | 500 m | 1 km | 2 km | 3 km |
+| --- | --- | --- | --- | --- | --- |
+| Loss, dB(A) | 1.1 | 3.8 | 5.9 | 8.8 | 10.7 |
+| As a flat 0.78 dB/100 m | 0.7 | 3.8 | 7.7 | 15.4 | 23.2 |
+
+(18 °C / 75 %.) A per-100 m rate is only right at the distance it was fitted at. Treating absorption that way over-attenuated by 1.7 dB at 1 km and 12.5 dB at 3 km, which pulled the quiet contours — the 45 and 35 dB(A) audibility bands, the ones a neighbour actually cares about — hundreds of metres to kilometres inside where they belong.
+
+The loss is evaluated thousands of times per contour, so it is precomputed per temperature and humidity at 64 log-spaced distances and interpolated in log-distance, which costs under 0.01 dB. The bass figure stays linear in distance: it is the 63 Hz coefficient, around 0.01 dB per 100 m. Air does essentially nothing to a kick drum, which is why bass is what carries to the next village.
+
+`broadbandCoefficients` still reports the old single-rate fit at 500 m for reference: **0.798 dB per 100 m** at 20 °C / 70 %, matching the 0.8 the model used as a hard-coded constant before any of this existed, and ranging from 0.74 (15 °C / 90 %) to 0.90 (25 °C / 35 %). The propagation model no longer uses it.
 
 ### Wind and inversion
 

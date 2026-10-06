@@ -113,12 +113,15 @@ export const BASS_BAND_HZ = 63;
 
 /**
  * Distance the broadband figure is fitted at. Absorption is not linear in dB once a spectrum is
- * involved — the bright bands die first and the mix dulls — so the per-100 m number has to be a
- * fit at a representative distance rather than a true constant. 500 m is where the houses are.
+ * involved — the bright bands die first and the mix dulls — so a per-100 m number can only ever
+ * be a fit at one distance. 500 m is where the houses are.
+ *
+ * `broadbandCoefficients` is that fit, kept for the README and for readouts. The propagation
+ * model does not use it: see `absorptionLoss`, which does the sum at the actual distance.
  */
 export const FIT_DISTANCE_M = 500;
-const FIT_REFERENCE_M = 10;
-const FIT_SPAN_M = FIT_DISTANCE_M - FIT_REFERENCE_M;
+export const REFERENCE_M = 10;
+const FIT_SPAN_M = FIT_DISTANCE_M - REFERENCE_M;
 
 export interface BroadbandCoefficients {
   /** Effective A-weighted absorption, dB per 100 m. */
@@ -159,4 +162,107 @@ export function broadbandCoefficients(temperatureC: number, relativeHumidityPct:
   };
   cache.set(key, result);
   return result;
+}
+
+export interface AbsorptionLoss {
+  /** A-weighted loss to the air between 10 m and this distance, dB. */
+  la: number;
+  /** Bass-band loss over the same span, dB. */
+  lc: number;
+}
+
+/**
+ * Loss to the air between the 10 m reference and `distanceM`, summed band by band.
+ *
+ * This is the honest version, and the reason the model cannot use a per-100 m rate. Each band
+ * is attenuated by its own ISO coefficient and the A-weighted total is re-summed, so the mix
+ * that arrives at 2 km is not the mix that left the stacks: the 4 and 8 kHz bands are gone
+ * long before then, and once they are gone there is nothing left for the air to take. The
+ * A-weighted loss therefore flattens off with distance instead of growing linearly.
+ *
+ * Treating it as a rate fitted at 500 m over-attenuates by roughly 1.7 dB at 1 km, 6.7 dB at
+ * 2 km and 12.5 dB at 3 km on a typical night, which is enough to pull the quiet contours —
+ * the 45 and 35 dB(A) audibility bands, exactly the ones a neighbour cares about — hundreds of
+ * metres inside where they belong.
+ */
+export function absorptionLossExact(
+  distanceM: number,
+  temperatureC: number,
+  relativeHumidityPct: number,
+): AbsorptionLoss {
+  const span = distanceM - REFERENCE_M;
+  if (!(span > 0)) return { la: 0, lc: 0 };
+
+  const near: number[] = [];
+  const far: number[] = [];
+  for (const band of MUSIC_SPECTRUM) {
+    const weighted = band.relativeDb + aWeighting(band.frequencyHz);
+    near.push(weighted);
+    far.push(weighted - absorptionCoefficient(band.frequencyHz, temperatureC, relativeHumidityPct) * span);
+  }
+  return {
+    la: sumDb(near) - sumDb(far),
+    lc: absorptionCoefficient(BASS_BAND_HZ, temperatureC, relativeHumidityPct) * span,
+  };
+}
+
+/** Lookup resolution. 64 log-spaced steps put the interpolation error below 0.01 dB. */
+export const LOOKUP_POINTS = 64;
+export const LOOKUP_MAX_M = 50_000;
+const LOG_SPAN = Math.log(LOOKUP_MAX_M / REFERENCE_M);
+
+interface LossTable {
+  /** A-weighted loss at each log-spaced distance. */
+  la: Float64Array;
+  /** 63 Hz coefficient, dB per metre: the bass loss is linear, so it needs no table. */
+  bassPerM: number;
+}
+
+const tables = new Map<number, LossTable>();
+
+const conditionKey = (temperatureC: number, relativeHumidityPct: number): number =>
+  Math.round(temperatureC * 10) * 100_000 + Math.round(relativeHumidityPct * 10);
+
+function lossTable(temperatureC: number, relativeHumidityPct: number): LossTable {
+  const key = conditionKey(temperatureC, relativeHumidityPct);
+  const hit = tables.get(key);
+  if (hit) return hit;
+
+  const la = new Float64Array(LOOKUP_POINTS);
+  for (let i = 0; i < LOOKUP_POINTS; i++) {
+    const d = REFERENCE_M * Math.exp((LOG_SPAN * i) / (LOOKUP_POINTS - 1));
+    la[i] = absorptionLossExact(d, temperatureC, relativeHumidityPct).la;
+  }
+  const table: LossTable = {
+    la,
+    bassPerM: absorptionCoefficient(BASS_BAND_HZ, temperatureC, relativeHumidityPct),
+  };
+  tables.set(key, table);
+  return table;
+}
+
+/**
+ * The same loss, cheap enough to call inside a contour bisection.
+ *
+ * The A-weighted figure comes from a precomputed table of 64 log-spaced distances, interpolated
+ * in log-distance; the bass figure is linear in distance, so it is computed outright rather
+ * than interpolated.
+ */
+export function absorptionLoss(
+  distanceM: number,
+  temperatureC: number,
+  relativeHumidityPct: number,
+): AbsorptionLoss {
+  const span = distanceM - REFERENCE_M;
+  if (!(span > 0)) return { la: 0, lc: 0 };
+
+  const table = lossTable(temperatureC, relativeHumidityPct);
+  const clamped = Math.min(distanceM, LOOKUP_MAX_M);
+  const x = (Math.log(clamped / REFERENCE_M) / LOG_SPAN) * (LOOKUP_POINTS - 1);
+  const i = Math.min(LOOKUP_POINTS - 2, Math.floor(x));
+  const f = x - i;
+  return {
+    la: table.la[i] + (table.la[i + 1] - table.la[i]) * f,
+    lc: table.bassPerM * span,
+  };
 }

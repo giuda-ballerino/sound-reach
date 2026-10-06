@@ -42,11 +42,11 @@ describe('propagation', () => {
     const d = reachDistance(rig, plain, 60, undefined);
     expect(levelAt(rig, plain, d).la).toBeCloseTo(60, 2);
   });
-  it('a 100% rig on an open field reaches 60 dB(A) around a kilometre at night', () => {
+  it('a 100% rig on an open field reaches 60 dB(A) about two kilometres away at night', () => {
     const night: Conditions = { ...CONDITION_PRESETS.typical, inversion: true };
     const d = reachDistance({ ...DEFAULT_RIG, volumePct: 100 }, night, 60, DEFAULT_RIG.aimDeg);
-    expect(d).toBeGreaterThan(900);
-    expect(d).toBeLessThan(2200);
+    expect(d).toBeGreaterThan(1500);
+    expect(d).toBeLessThan(3000);
   });
 });
 

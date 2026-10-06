@@ -1,9 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
+  FIT_DISTANCE_M,
+  LOOKUP_MAX_M,
   MUSIC_SPECTRUM,
   P_REF,
+  REFERENCE_M,
   aWeighting,
   absorptionCoefficient,
+  absorptionLoss,
+  absorptionLossExact,
   absorptionPerKm,
   broadbandCoefficients,
 } from './absorption';
@@ -142,5 +147,81 @@ describe('broadbandCoefficients', () => {
   it('memoises, so contour bisection does not redo the integral thousands of times', () => {
     expect(broadbandCoefficients(18, 75)).toBe(broadbandCoefficients(18, 75));
     expect(broadbandCoefficients(18, 75)).not.toBe(broadbandCoefficients(19, 75));
+  });
+});
+
+describe('absorptionLoss', () => {
+  it('agrees with the 500 m rate fit at 500 m, which is where the fit was made', () => {
+    for (const [t, rh] of [
+      [20, 70],
+      [18, 75],
+      [15, 90],
+      [25, 35],
+    ] as const) {
+      const exact = absorptionLossExact(FIT_DISTANCE_M, t, rh).la;
+      const fromRate = (broadbandCoefficients(t, rh).laPer100m * (FIT_DISTANCE_M - REFERENCE_M)) / 100;
+      expect(Math.abs(exact - fromRate)).toBeLessThan(0.05);
+    }
+  });
+
+  it('flattens off with distance instead of growing linearly', () => {
+    // Once the 4 and 8 kHz bands are gone the air has nothing left to take, so the A-weighted
+    // loss stops keeping pace with distance. A per-100 m rate fitted at 500 m keeps going.
+    const rate = broadbandCoefficients(18, 75).laPer100m;
+    for (const [d, want] of [
+      [1000, 5.9],
+      [2000, 8.8],
+      [3000, 10.7],
+    ] as const) {
+      expect(absorptionLossExact(d, 18, 75).la).toBeCloseTo(want, 0);
+      expect(Math.abs(absorptionLossExact(d, 18, 75).la - want)).toBeLessThan(0.3);
+      // And the linear term really does overshoot by the amount that motivated this.
+      expect((rate * (d - REFERENCE_M)) / 100).toBeGreaterThan(absorptionLossExact(d, 18, 75).la + 1);
+    }
+  });
+
+  it('is zero at the reference distance and never goes backwards', () => {
+    expect(absorptionLoss(REFERENCE_M, 18, 75)).toEqual({ la: 0, lc: 0 });
+    expect(absorptionLoss(5, 18, 75)).toEqual({ la: 0, lc: 0 });
+    let previous = -1;
+    for (let d = 10; d <= 20_000; d += 37) {
+      const { la } = absorptionLoss(d, 18, 75);
+      expect(la).toBeGreaterThanOrEqual(previous);
+      previous = la;
+    }
+  });
+
+  it('keeps the bass loss linear in distance', () => {
+    const a = absorptionLoss(1000, 18, 75).lc;
+    const b = absorptionLoss(3000, 18, 75).lc;
+    expect((b / a)).toBeCloseTo((3000 - REFERENCE_M) / (1000 - REFERENCE_M), 6);
+    // And negligible either way: a fifth of a dB across three kilometres.
+    expect(b).toBeLessThan(0.3);
+  });
+
+  it('matches the direct computation everywhere the table is used', () => {
+    for (let i = 0; i < 20; i++) {
+      const d = REFERENCE_M * Math.exp(Math.random() * Math.log(LOOKUP_MAX_M / REFERENCE_M));
+      for (const [t, rh] of [
+        [18, 75],
+        [15, 90],
+        [25, 35],
+      ] as const) {
+        const viaTable = absorptionLoss(d, t, rh);
+        const direct = absorptionLossExact(d, t, rh);
+        expect(Math.abs(viaTable.la - direct.la), `la at ${d.toFixed(1)} m`).toBeLessThan(0.05);
+        expect(Math.abs(viaTable.lc - direct.lc), `lc at ${d.toFixed(1)} m`).toBeLessThan(0.05);
+      }
+    }
+  });
+
+  it('loses more of the mix in dry air at every distance', () => {
+    for (const d of [200, 1000, 3000]) {
+      expect(absorptionLoss(d, 25, 35).la).toBeGreaterThan(absorptionLoss(d, 15, 90).la);
+    }
+  });
+
+  it('holds the last value past the end of the table rather than running away', () => {
+    expect(absorptionLoss(LOOKUP_MAX_M * 2, 18, 75).la).toBeCloseTo(absorptionLoss(LOOKUP_MAX_M, 18, 75).la, 6);
   });
 });

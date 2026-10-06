@@ -65,9 +65,9 @@ describe('shieldedReach', () => {
 
   it('returns the FIRST crossing when terrain makes the level non-monotonic', () => {
     // A band of heavy shielding from 300 to 500 m: the level dives below the target at 300 m,
-    // then climbs back above it past 500 m and only falls again around 960 m. A bisection over
-    // the whole range converges on that last crossing and draws the contour three times too
-    // far out; the march has to stop at 300.
+    // then climbs back above it past 500 m and only falls again just past a kilometre. A
+    // bisection over the whole range converges on that last crossing and draws the contour
+    // three times too far out; the march has to stop at 300.
     const RIDGE_FROM = 300;
     const RIDGE_TO = 500;
     const bumpy: ShieldingAt = (_b, d) =>
@@ -79,7 +79,7 @@ describe('shieldedReach', () => {
     expect(at(RIDGE_FROM - 1)).toBeGreaterThan(target);
     expect(at(RIDGE_FROM)).toBeLessThan(target);
     expect(at(RIDGE_TO + 100)).toBeGreaterThan(target);
-    expect(at(1200)).toBeLessThan(target);
+    expect(at(1500)).toBeLessThan(target);
 
     expect(shieldedReach(rig, plain, target, 0, 'la', bumpy)).toBeCloseTo(RIDGE_FROM, 1);
     // And the later crossing really is out where a whole-range bisection would have landed.

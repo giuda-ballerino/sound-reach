@@ -12,7 +12,7 @@
  * All numbers are estimates (±5 dB). Reflections and buildings are not modelled.
  */
 
-import { broadbandCoefficients } from './absorption';
+import { absorptionLoss } from './absorption';
 import type { Conditions } from './conditions';
 import { angleBetweenBearings } from './geo';
 import { propagationCorrection } from './wind';
@@ -93,7 +93,9 @@ export function levelAt(
   const d = Math.max(distanceM, REF_DISTANCE);
   const l10 = sourceLevel(p);
   const spread = -20 * Math.log10(d / REF_DISTANCE);
-  const air = broadbandCoefficients(c.temperatureC, c.humidityPct);
+  // Band-by-band loss at this exact distance, not a per-100 m rate: the mix dulls as it travels
+  // and the A-weighted loss flattens off, which a linear term badly overstates far out.
+  const air = absorptionLoss(d, c.temperatureC, c.humidityPct);
   const ground = c.groundSoft && d > 200 ? -2 * Math.min(1, (d - 200) / 400) : 0;
   // Wind and inversion are the same term for both bands: refraction bends the whole spectrum.
   const weather = propagationCorrection(d, bearingDeg ?? p.aimDeg, c);
@@ -101,12 +103,12 @@ export function levelAt(
   const dirTops = p.directional ? topsDirectivity(off) : 0;
   const dirSubs = p.directional ? subsDirectivity(off, p.subs) : 0;
   const la =
-    l10 + spread - (air.laPer100m * (d - REF_DISTANCE)) / 100 + ground + weather + dirTops - (shielding?.la ?? 0);
+    l10 + spread - air.la + ground + weather + dirTops - (shielding?.la ?? 0);
   const lc =
     l10 +
     p.bassExcess +
     spread -
-    (air.lcPer100m * (d - REF_DISTANCE)) / 100 +
+    air.lc +
     ground * 0.5 +
     weather +
     dirSubs -
