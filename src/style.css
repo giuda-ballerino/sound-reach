@@ -47,10 +47,15 @@
 
 * { box-sizing: border-box; }
 html, body, #app { height: 100%; margin: 0; }
-body { background: var(--bg); color: var(--fg); font: 14px/1.45 var(--sans); }
+/* The app owns the whole viewport and never scrolls as a page; the panel scrolls inside it. */
+body { background: var(--bg); color: var(--fg); font: 14px/1.45 var(--sans); overflow: hidden; }
 
-.app { display: grid; grid-template-columns: 360px minmax(0, 1fr); height: 100%; }
-.side { background: var(--panel); border-right: 1px solid var(--line); overflow-y: auto; padding-inline: 16px; padding-block: 14px 32px; }
+/* An explicit minmax(0, 1fr) row is what makes the panel scroll. A grid row left to `auto`
+   takes its minimum from its content, so a sidebar taller than the window grows the row,
+   overflows the 100%-high grid, and pushes the page into scrolling instead of scrolling
+   itself. `min-height: 0` on the item is the other half of the same fix. */
+.app { display: grid; grid-template-columns: 360px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); height: 100%; }
+.side { background: var(--panel); border-right: 1px solid var(--line); overflow-y: auto; min-height: 0; padding-inline: 16px; padding-block: 14px 32px; }
 .side-head h1 { font-size: 1.25rem; margin: 0; font-weight: 600; letter-spacing: -0.01em; }
 .sub { color: var(--muted); margin: 2px 0 0; font-size: 0.9rem; }
 .block { padding-block: 12px; border-top: 1px solid var(--line); }
@@ -151,7 +156,7 @@ tr.selected { background: var(--soft); }
 .leaflet-tooltip { font-family: var(--mono); font-size: 12px; }
 
 @media (max-width: 820px) {
-  .app { grid-template-columns: 1fr; grid-template-rows: 1fr; }
+  .app { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr); }
   .side { position: absolute; z-index: 1100; inset: 0 auto 0 0; width: min(92vw, 380px); transform: translateX(0); transition: transform .2s ease; box-shadow: 4px 0 20px rgba(0,0,0,.25); }
   .side.collapsed { transform: translateX(-104%); }
   .side-toggle { display: block; }
